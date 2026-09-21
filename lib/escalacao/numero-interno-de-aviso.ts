@@ -113,6 +113,49 @@ export function ehOChatDoAviso(parsed: ChatIdentidade, cfg: NumeroInternoDeAviso
   return false;
 }
 
+/**
+ * O DONO MANDA: quando a organização liga `settings.avisos_internos.tratar_destino_como_cliente`,
+ * o número que recebe os avisos passa a ser atendido como qualquer contato — as
+ * mensagens dele viram lead, conversa e turno do agente, e os avisos SEGUEM
+ * chegando nele. O corte existe para o número do plantão de terceiros; quando o
+ * destino é o próprio dono da instalação, é escolha dele ser cliente do próprio
+ * CRM. Memoizada por 30 s (mesmo horizonte da leitura da config) e fail-open:
+ * qualquer falha na leitura devolve `false` e o corte de hoje permanece.
+ */
+const _cacheFlag = new Map<string, { at: number; valor: boolean }>();
+
+export async function destinoTratadoComoCliente(
+  db: SupabaseClient,
+  organizationId: string,
+): Promise<boolean> {
+  const agora = Date.now();
+  const emCache = _cacheFlag.get(organizationId);
+  if (emCache && agora - emCache.at < TTL_DO_CACHE_MS) return emCache.valor;
+
+  let valor = false;
+  try {
+    const r = await db
+      .from("organizations")
+      .select("settings")
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (r.error) throw new Error(r.error.message);
+    const settings = (r.data as { settings?: Record<string, unknown> } | null)?.settings;
+    const avisos = settings?.["avisos_internos"] as
+      | { tratar_destino_como_cliente?: boolean }
+      | undefined;
+    valor = avisos?.["tratar_destino_como_cliente"] === true;
+  } catch (err) {
+    logger.warn("[aviso-interno] não consegui ler a flag do dono — corte permanece", {
+      organizationId,
+      causa: err instanceof Error ? err.message : String(err),
+    });
+    valor = false;
+  }
+  _cacheFlag.set(organizationId, { at: agora, valor });
+  return valor;
+}
+
 /** A configuração da organização, memoizada por 30 s. Nunca lança. */
 export async function lerNumeroInternoDeAviso(
   db: SupabaseClient,
@@ -177,6 +220,8 @@ export async function ehContatoDoNumeroInterno(
   organizationId: string,
   contactId: string,
 ): Promise<boolean> {
+  // A regra do dono vence o corte: destino configurado como cliente não é cortado.
+  if (await destinoTratadoComoCliente(db, organizationId)) return false;
   const cfg = await lerNumeroInternoDeAviso(db, organizationId);
   if (!cfg.destino && !cfg.jid) return false;
 
@@ -218,9 +263,9 @@ export async function ehNumeroInternoDeAviso(
   organizationId: string,
   parsed: ChatIdentidade,
 ): Promise<boolean> {
-  // Atalho barato: grupo e formato desconhecido nunca são o número de aviso, e
-  // perguntar ao banco por eles gastaria a consulta quente à toa.
+  // A regra do dono vence o corte: destino configurado como cliente não é cortado.
   if (parsed.kind !== "phone" && parsed.kind !== "lid") return false;
+  if (await destinoTratadoComoCliente(db, organizationId)) return false;
   return ehOChatDoAviso(parsed, await lerNumeroInternoDeAviso(db, organizationId));
 }
 
