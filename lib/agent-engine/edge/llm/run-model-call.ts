@@ -16,16 +16,16 @@ import { guardServiceTools } from "@/lib/atendimento/fronteira-server";
  * cacheWriteTokens}. Validado no ai@7 via scripts/smoke-llm.sh (modelo real) —
  * upgrade de major re-valida esses paths pelo mesmo gate (regra dura 16).
  */
-import { generateText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
-import type pg from 'pg';
-import { z } from 'zod';
+import { generateText, stepCountIs, type ModelMessage, type ToolSet } from "ai";
+import type pg from "pg";
+import { z } from "zod";
 
-import { PONTO_POR_ID } from '@/lib/ai/pontos/registro';
-import { scrubMessage } from '@/lib/sentry/scrub';
+import { PONTO_POR_ID } from "@/lib/ai/pontos/registro";
+import { scrubMessage } from "@/lib/sentry/scrub";
 
-import type { Logger } from '../../obs/logger';
-import { decidirParaOSeam } from './binding-do-ponto';
-import { resolveOrgLlmConfig, type LlmEdgeConfig, type OrcamentoDaOrg } from './credentials';
+import type { Logger } from "../../obs/logger";
+import { decidirParaOSeam } from "./binding-do-ponto";
+import { resolveOrgLlmConfig, type LlmEdgeConfig, type OrcamentoDaOrg } from "./credentials";
 import {
   AVISO_CORPO,
   AVISO_TITULO,
@@ -36,28 +36,29 @@ import {
   LIMIAR_PADRAO_PCT,
   SQL_ORCAMENTO,
   type ChaveDeOrcamento,
-} from './orcamento';
-import { costCents } from './pricing';
-import { chaveDeOrcamentoDaInstalacao } from '../../../instalacao/comportamento';
-import { createDefaultRegistry, type ProviderRegistry } from './providers';
-import { buildStablePrefix } from './stable-prefix';
+} from "./orcamento";
+import { costCents } from "./pricing";
+import { chaveDeOrcamentoDaInstalacao } from "../../../instalacao/comportamento";
+import { createDefaultRegistry, type ProviderRegistry } from "./providers";
+import { parseExtraHosts } from "../egress";
+import { buildStablePrefix } from "./stable-prefix";
 import {
   degrauDoEnderecoProprio,
   prazoLegivel,
   RECUSA_A_PARTIR_DE,
-} from './prazo-do-endereco-proprio';
+} from "./prazo-do-endereco-proprio";
 
 // Call sites FORA da camada importam os tipos daqui — nunca de 'ai' direto
 // (o seam é a única porta). `tool` idem: é como o agente define ToolSet sem
 // tocar no SDK.
-export { tool } from 'ai';
-export type { ModelMessage, ToolSet } from 'ai';
-export type { LlmEdgeConfig } from './credentials';
-export { llmEdgeConfigFromEnv, LlmNotConfiguredError } from './credentials';
+export { tool } from "ai";
+export type { ModelMessage, ToolSet } from "ai";
+export type { LlmEdgeConfig } from "./credentials";
+export { llmEdgeConfigFromEnv, LlmNotConfiguredError } from "./credentials";
 
 /** Teto mensal da org esgotado — runs recusados ANTES do provider (zero tokens). */
 export class LlmBudgetExceededError extends Error {
-  override readonly name = 'llm_budget_exceeded';
+  override readonly name = "llm_budget_exceeded";
   /**
    * Veto PERMANENTE de negócio, não incidente de sistema — tentar de novo daqui
    * a um minuto dá o mesmo resultado, porque o gasto não diminui sozinho.
@@ -70,13 +71,15 @@ export class LlmBudgetExceededError extends Error {
    */
   readonly terminal = true;
   constructor() {
-    super('orçamento mensal de IA da organização atingido — chamada recusada antes de sair byte para o provedor; ajuste o teto em Uso de IA › Orçamento, desligue a proteção, ou aguarde a virada do mês (agent_inbox_items kind=budget_exceeded)');
+    super(
+      "orçamento mensal de IA da organização atingido — chamada recusada antes de sair byte para o provedor; ajuste o teto em Uso de IA › Orçamento, desligue a proteção, ou aguarde a virada do mês (agent_inbox_items kind=budget_exceeded)",
+    );
   }
 }
 
 /** Provider da config sem entrada no registry — erro de config, nunca fallback. */
 export class LlmProviderUnknownError extends Error {
-  override readonly name = 'llm_provider_unknown';
+  override readonly name = "llm_provider_unknown";
   constructor(provider: string) {
     super(`provider LLM desconhecido na config da org: ${provider}`);
   }
@@ -84,7 +87,7 @@ export class LlmProviderUnknownError extends Error {
 
 /** Modelo pedido fora de enabled_models da org. */
 export class LlmModelNotEnabledError extends Error {
-  override readonly name = 'llm_model_not_enabled';
+  override readonly name = "llm_model_not_enabled";
   constructor(model: string) {
     super(`modelo não habilitado para a org (enabled_models): ${model}`);
   }
@@ -110,10 +113,10 @@ export class LlmModelNotEnabledError extends Error {
  * frase como motivo.
  */
 export class LlmEnderecoExigeChaveDaEmpresaError extends Error {
-  override readonly name = 'llm_endereco_exige_chave_da_empresa';
+  override readonly name = "llm_endereco_exige_chave_da_empresa";
   constructor() {
     super(
-      'o endereço de IA configurado para esta empresa só é usado com a chave dela, e ela não tem chave cadastrada para este provedor — a chave da instalação não é enviada a endereço escolhido pela empresa; cadastre a chave da empresa em Agente de IA › Provedores, ou tire o endereço próprio para voltar ao provedor padrão da instalação',
+      "o endereço de IA configurado para esta empresa só é usado com a chave dela, e ela não tem chave cadastrada para este provedor — a chave da instalação não é enviada a endereço escolhido pela empresa; cadastre a chave da empresa em Agente de IA › Provedores, ou tire o endereço próprio para voltar ao provedor padrão da instalação",
     );
   }
 }
@@ -123,7 +126,7 @@ export class LlmEnderecoExigeChaveDaEmpresaError extends Error {
  * dedup: o aviso usa `kind='other'` sem referência (ver `recusarEndereco…`).
  */
 export const TITULO_ENDERECO_SEM_CHAVE_DA_EMPRESA =
-  'A IA recusou usar o endereço próprio desta empresa sem a chave dela';
+  "A IA recusou usar o endereço próprio desta empresa sem a chave dela";
 
 /**
  * O título da fase de AVISO — antes do prazo, a chamada SEGUE, e dizer
@@ -131,8 +134,7 @@ export const TITULO_ENDERECO_SEM_CHAVE_DA_EMPRESA =
  * separa a dedup: o aviso do prazo e a recusa de depois são dois itens, e é
  * assim que a Central conta a história em vez de sobrescrevê-la.
  */
-export const TITULO_ENDERECO_SEM_CHAVE_PRAZO =
-  `A IA vai deixar de usar o endereço próprio desta empresa sem a chave dela em ${prazoLegivel()}`;
+export const TITULO_ENDERECO_SEM_CHAVE_PRAZO = `A IA vai deixar de usar o endereço próprio desta empresa sem a chave dela em ${prazoLegivel()}`;
 
 /** O corpo do aviso — só o HOST do endereço, nunca a URL inteira. */
 export function corpoDoAvisoDeEnderecoSemChave(d: {
@@ -140,12 +142,12 @@ export function corpoDoAvisoDeEnderecoSemChave(d: {
   provider: string;
   baseUrl: string;
   /** `avisa` antes do prazo (a chamada seguiu), `recusa` depois dele. */
-  degrau: 'avisa' | 'recusa';
+  degrau: "avisa" | "recusa";
 }): string {
   const ponto = PONTO_POR_ID.get(d.purpose)?.rotulo ?? d.purpose;
   // Só o host: uma URL pode carregar usuário e senha (`https://u:s@host`) ou um
   // token na query, e este corpo é lido por qualquer pessoa da equipe.
-  let destino = 'um endereço próprio';
+  let destino = "um endereço próprio";
   try {
     destino = `um endereço próprio (${new URL(d.baseUrl).host})`;
   } catch {
@@ -156,7 +158,7 @@ export function corpoDoAvisoDeEnderecoSemChave(d: {
     `mas esta empresa não tem chave de ${d.provider} cadastrada e validada. ` +
     `A chave de IA da instalação — a que paga a conta de todas as empresas deste servidor — ` +
     `não é enviada a um endereço escolhido por uma empresa. ` +
-    (d.degrau === 'recusa'
+    (d.degrau === "recusa"
       ? `A chamada foi recusada antes de sair. Enquanto isso não for corrigido, as chamadas desse ponto ` +
         `continuam recusadas; quando o ponto faz parte do atendimento, o agente deixa de responder aos ` +
         `clientes desta empresa. `
@@ -220,7 +222,7 @@ export interface RunModelCallInput {
    * Override de provider/credencial vindo da versão PUBLICADA do agente (Fase
    * 2B) — resolvido no seam, nunca no call site. Sem ele, config da org.
    */
-  llmOverride?: import('./credentials').LlmResolveOverride;
+  llmOverride?: import("./credentials").LlmResolveOverride;
 }
 
 export interface RunModelCallDeps {
@@ -300,13 +302,13 @@ async function aplicarOrcamento(d: {
   const comum = { organization_id: d.organizationId, purpose: d.purpose };
 
   if (d.orcamentoIndisponivelPorque !== null) {
-    d.log?.warn('llm: orçamento não pôde ser lido — a chamada SEGUE sem teto', {
+    d.log?.warn("llm: orçamento não pôde ser lido — a chamada SEGUE sem teto", {
       ...comum,
       causa: d.orcamentoIndisponivelPorque,
     });
     return;
   }
-  if (d.orcamentoDaConfig.modo === 'off' || d.chave === 'off') {
+  if (d.orcamentoDaConfig.modo === "off" || d.chave === "off") {
     return;
   }
 
@@ -320,7 +322,7 @@ async function aplicarOrcamento(d: {
     ]);
     linha = rows[0];
   } catch (err) {
-    d.log?.warn('llm: consulta de orçamento falhou — a chamada SEGUE sem teto', {
+    d.log?.warn("llm: consulta de orçamento falhou — a chamada SEGUE sem teto", {
       ...comum,
       ...normalizarErro(err),
     });
@@ -329,7 +331,7 @@ async function aplicarOrcamento(d: {
   if (linha === undefined) {
     // `select` de CTEs escalares sempre devolve uma linha; zero linhas aqui é
     // um mundo que não deveria existir, e nele a resposta segue sendo a frouxa.
-    d.log?.warn('llm: consulta de orçamento não devolveu linha — a chamada SEGUE', comum);
+    d.log?.warn("llm: consulta de orçamento não devolveu linha — a chamada SEGUE", comum);
     return;
   }
 
@@ -347,13 +349,13 @@ async function aplicarOrcamento(d: {
     avisadoNesteMes: linha.avisado_antes === true,
   });
 
-  if (veredito.acao === 'seguir') {
+  if (veredito.acao === "seguir") {
     return;
   }
-  if (veredito.acao === 'avisar_e_seguir') {
+  if (veredito.acao === "avisar_e_seguir") {
     // O item da Central já foi aberto pelo próprio statement (CTE `avisa`), no
     // mesmo snapshot que decidiu — aqui só sobra o log.
-    d.log?.warn('llm: gasto de IA passou do aviso — a chamada SEGUE', {
+    d.log?.warn("llm: gasto de IA passou do aviso — a chamada SEGUE", {
       ...comum,
       porque: veredito.porque,
       gasto_cents: gastoCents,
@@ -393,7 +395,7 @@ async function aplicarOrcamento(d: {
   }).catch(() => {
     // Gravar a recusa não pode impedir a recusa.
   });
-  d.log?.warn('llm: chamada recusada por orçamento', {
+  d.log?.warn("llm: chamada recusada por orçamento", {
     ...comum,
     provider: d.provider,
     model: d.model,
@@ -435,7 +437,7 @@ async function registrarRecusaDeEnderecoSemChave(d: {
   origem: string;
   baseUrl: string;
   /** `avisa` antes do prazo (a chamada segue), `recusa` depois dele. */
-  degrau: 'avisa' | 'recusa';
+  degrau: "avisa" | "recusa";
   log?: Logger;
 }): Promise<LlmEnderecoExigeChaveDaEmpresaError | null> {
   const erro = new LlmEnderecoExigeChaveDaEmpresaError();
@@ -456,7 +458,9 @@ async function registrarRecusaDeEnderecoSemChave(d: {
        )`,
       [
         d.input.tenantId,
-        d.degrau === 'recusa' ? TITULO_ENDERECO_SEM_CHAVE_DA_EMPRESA : TITULO_ENDERECO_SEM_CHAVE_PRAZO,
+        d.degrau === "recusa"
+          ? TITULO_ENDERECO_SEM_CHAVE_DA_EMPRESA
+          : TITULO_ENDERECO_SEM_CHAVE_PRAZO,
         corpoDoAvisoDeEnderecoSemChave({
           purpose: d.purpose,
           provider: d.provider,
@@ -466,18 +470,21 @@ async function registrarRecusaDeEnderecoSemChave(d: {
       ],
     );
   } catch (err) {
-    d.log?.warn('llm: o aviso da recusa por endereço sem chave da empresa não abriu — a recusa segue', {
-      ...comum,
-      ...normalizarErro(err),
-    });
+    d.log?.warn(
+      "llm: o aviso da recusa por endereço sem chave da empresa não abriu — a recusa segue",
+      {
+        ...comum,
+        ...normalizarErro(err),
+      },
+    );
   }
 
-  if (d.degrau === 'avisa') {
+  if (d.degrau === "avisa") {
     // A chamada SEGUE até o prazo: gravar uma linha de FALHA em `llm_calls`
     // para uma chamada que vai acontecer seria mentira na tela de Execuções —
     // ela vira a linha normal da chamada, logo abaixo, como qualquer outra.
     d.log?.warn(
-      'llm: endereço da empresa com a chave da instalação — a chamada SEGUE até o prazo',
+      "llm: endereço da empresa com a chave da instalação — a chamada SEGUE até o prazo",
       { ...comum, recusa_a_partir_de: RECUSA_A_PARTIR_DE },
     );
     return null;
@@ -495,15 +502,28 @@ async function registrarRecusaDeEnderecoSemChave(d: {
     // Gravar a recusa não pode impedir a recusa.
   });
 
-  d.log?.warn('llm: chamada recusada — endereço escolhido pela empresa com a chave da instalação', comum);
+  d.log?.warn(
+    "llm: chamada recusada — endereço escolhido pela empresa com a chave da instalação",
+    comum,
+  );
   return erro;
 }
 
-export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunModelCallInput, deps: RunModelCallDeps = {}) {
+export async function runModelCall(
+  db: pg.Pool,
+  cfg: LlmEdgeConfig,
+  input: RunModelCallInput,
+  deps: RunModelCallDeps = {},
+) {
   // O knob do raciocínio da DeepSeek entra pela fábrica: `deepseekThinking` só é
   // lido pela fábrica `deepseek`, então os outros provedores não têm como mudar.
-  const registry = deps.registry ?? createDefaultRegistry({ deepseekThinking: cfg.deepseekThinking });
-  const purpose = input.purpose ?? 'agent_turn';
+  const registry =
+    deps.registry ??
+    createDefaultRegistry({
+      deepseekThinking: cfg.deepseekThinking,
+      allowedHosts: parseExtraHosts(process.env.EGRESS_EXTRA_ALLOWED_HOSTS),
+    });
+  const purpose = input.purpose ?? "agent_turn";
 
   // A config da org é lida ANTES da decisão porque o resolvedor precisa dela
   // como último degrau da precedência (o padrão, quando ninguém mais opinou).
@@ -513,20 +533,24 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
   // só um rótulo de custo e virar decisão. Sem binding configurado, `decisao`
   // reproduz exatamente o comportamento anterior — a origem volta como
   // 'variavel_de_ambiente' ou 'padrao_da_organizacao'.
-  const decisao = await decidirParaOSeam(db, {
-    organizationId: input.tenantId,
-    purpose,
-    modeloDoCallSite: input.model,
-    overrideDoAgente:
-      input.llmOverride === undefined
-        ? null
-        : {
-            provider: input.llmOverride.provider ?? padrao.provider,
-            credentialId: input.llmOverride.credentialId ?? null,
-            model: input.model,
-          },
-    padraoDaOrganizacao: { provider: padrao.provider, defaultModel: padrao.defaultModel },
-  }, deps.log ? { log: deps.log } : {});
+  const decisao = await decidirParaOSeam(
+    db,
+    {
+      organizationId: input.tenantId,
+      purpose,
+      modeloDoCallSite: input.model,
+      overrideDoAgente:
+        input.llmOverride === undefined
+          ? null
+          : {
+              provider: input.llmOverride.provider ?? padrao.provider,
+              credentialId: input.llmOverride.credentialId ?? null,
+              model: input.model,
+            },
+      padraoDaOrganizacao: { provider: padrao.provider, defaultModel: padrao.defaultModel },
+    },
+    deps.log ? { log: deps.log } : {},
+  );
 
   // Só re-resolve a credencial quando a decisão aponta para OUTRA que não a já
   // carregada — decifrar duas vezes a mesma chave é custo puro no caminho
@@ -554,8 +578,8 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
   const model = decisao.modelId;
   if (model === null || model === undefined) {
     throw new Error(
-      'modelo LLM não definido — configure o ponto no painel de provedores, ' +
-        'organizations.settings.llm.default_model, ou passe input.model',
+      "modelo LLM não definido — configure o ponto no painel de provedores, " +
+        "organizations.settings.llm.default_model, ou passe input.model",
     );
   }
   if (config.enabledModels.length > 0 && !config.enabledModels.includes(model)) {
@@ -567,7 +591,9 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
   }
   const parsedParams = paramsSchema.safeParse(config.params);
   if (!parsedParams.success) {
-    throw new Error('params inválidos em organizations.settings.llm.params — corrija a config da org');
+    throw new Error(
+      "params inválidos em organizations.settings.llm.params — corrija a config da org",
+    );
   }
   const { temperature, topP, topK, maxOutputTokens } = parsedParams.data;
 
@@ -594,7 +620,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
   // até `RECUSA_A_PARTIR_DE` a chamada SEGUE e o aviso na Central traz a DATA;
   // a partir dela, a recusa entra sem ninguém precisar reabrir o assunto.
   // A regra e o relógio injetável moram em `./prazo-do-endereco-proprio.ts`.
-  if (decisao.baseUrl && config.origemDaChave === 'chave_da_instalacao') {
+  if (decisao.baseUrl && config.origemDaChave === "chave_da_instalacao") {
     const erroOuNulo = await registrarRecusaDeEnderecoSemChave({
       db,
       input,
@@ -628,7 +654,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
     // a cada chamada, porque é aqui que a decisão acontece — um snapshot no
     // boot faria o kill switch da tela só valer depois de reiniciar o worker
     // (issue #1034). Sem banco lido nesta vida do processo, isto é o de hoje.
-    chave: chaveDeOrcamentoDaInstalacao(cfg.budgetEnforcement ?? 'on'),
+    chave: chaveDeOrcamentoDaInstalacao(cfg.budgetEnforcement ?? "on"),
     purpose,
     provider: config.provider,
     model,
@@ -644,7 +670,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
   const prefix = buildStablePrefix({
     system: input.system,
     tools: input.tools,
-    cacheTtl: cfg.cacheTtl ?? '1h',
+    cacheTtl: cfg.cacheTtl ?? "1h",
   });
 
   const startedAt = Date.now();
@@ -666,9 +692,10 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
       temperature,
       topP,
       topK,
-      maxOutputTokens: input.maxOutputTokens === undefined
-        ? maxOutputTokens
-        : Math.min(maxOutputTokens ?? Infinity, input.maxOutputTokens),
+      maxOutputTokens:
+        input.maxOutputTokens === undefined
+          ? maxOutputTokens
+          : Math.min(maxOutputTokens ?? Infinity, input.maxOutputTokens),
     });
   } catch (err) {
     // ─── A LINHA QUE FALTAVA ────────────────────────────────────────────────
@@ -695,7 +722,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
       // O log da falha não pode causar uma segunda falha. Se o próprio INSERT
       // de erro falhar, o erro ORIGINAL é o que interessa a quem chamou.
     });
-    deps.log?.error('llm: chamada falhou', {
+    deps.log?.error("llm: chamada falhou", {
       organization_id: input.tenantId,
       purpose,
       provider: config.provider,
@@ -716,7 +743,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
   // O TTL é o MESMO que gravou o prefixo estável acima: a gravação de cache custa
   // 1.25× a entrada em 5m e 2× em 1h, e supor a doutrina superfaturaria 60% da
   // parcela de cache write em quem usa o knob.
-  const cost = costCents(model, usage, cfg.cacheTtl ?? '1h');
+  const cost = costCents(model, usage, cfg.cacheTtl ?? "1h");
 
   const { rows } = await db.query<{ id: string }>(
     `insert into llm_calls
@@ -745,7 +772,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
   );
 
   // Só métricas — nunca conteúdo de mensagem (PII) nem chave.
-  deps.log?.info('llm: chamada concluída', {
+  deps.log?.info("llm: chamada concluída", {
     organization_id: input.tenantId,
     provider: config.provider,
     model,
@@ -759,7 +786,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
     latency_ms: latencyMs,
   });
   for (const aviso of decisao.avisos) {
-    deps.log?.warn('llm: configuração do ponto tem incoerência', {
+    deps.log?.warn("llm: configuração do ponto tem incoerência", {
       organization_id: input.tenantId,
       purpose,
       aviso,
@@ -814,28 +841,39 @@ export function normalizarErro(err: unknown): {
   // construímos. Sem este ramo a tela de Execuções mostraria "Não conseguimos
   // classificar esta falha" no caso mais bem explicado do produto.
   if (err instanceof LlmBudgetExceededError) {
-    return { error_code: 'orcamento_esgotado', error_message: redigirMensagemDoProvedor(bruto), http_status: null };
+    return {
+      error_code: "orcamento_esgotado",
+      error_message: redigirMensagemDoProvedor(bruto),
+      http_status: null,
+    };
   }
   // A outra recusa nossa: endereço da empresa com a chave da instalação.
   if (err instanceof LlmEnderecoExigeChaveDaEmpresaError) {
     return {
-      error_code: 'endereco_exige_chave_da_empresa',
+      error_code: "endereco_exige_chave_da_empresa",
       error_message: redigirMensagemDoProvedor(bruto),
       http_status: null,
     };
   }
 
-  let codigo = 'erro_desconhecido';
-  if (status === 401 || status === 403 || /unauthor|invalid.*api.?key|authentication|incorrect api key/i.test(bruto)) {
-    codigo = 'credencial_recusada';
+  let codigo = "erro_desconhecido";
+  if (
+    status === 401 ||
+    status === 403 ||
+    /unauthor|invalid.*api.?key|authentication|incorrect api key/i.test(bruto)
+  ) {
+    codigo = "credencial_recusada";
   } else if (status === 404 || /model.*not.*found|does not exist/i.test(bruto)) {
-    codigo = 'modelo_inexistente';
+    codigo = "modelo_inexistente";
   } else if (status === 429 || /rate.?limit|quota|insufficient.*credit/i.test(bruto)) {
-    codigo = 'limite_ou_saldo';
-  } else if ((status !== null && status >= 500) || /timeout|ECONNREFUSED|fetch failed|network/i.test(bruto)) {
-    codigo = 'provedor_indisponivel';
+    codigo = "limite_ou_saldo";
+  } else if (
+    (status !== null && status >= 500) ||
+    /timeout|ECONNREFUSED|fetch failed|network/i.test(bruto)
+  ) {
+    codigo = "provedor_indisponivel";
   } else if (/tool|function.?call/i.test(bruto)) {
-    codigo = 'modelo_sem_ferramentas';
+    codigo = "modelo_sem_ferramentas";
   }
 
   return {
@@ -851,7 +889,7 @@ export function normalizarErro(err: unknown): {
     // apontado por `base_url` — caminho que o painel de provedores abre — pode
     // ecoar no corpo de erro o header de autorização ou o prompt recebido.
     error_message: redigirMensagemDoProvedor(bruto),
-    http_status: typeof status === 'number' ? status : null,
+    http_status: typeof status === "number" ? status : null,
   };
 }
 
@@ -867,12 +905,12 @@ export function redigirMensagemDoProvedor(bruto: string): string {
   const semSegredo = bruto
     // Chaves de API dos provedores que este produto fala: `sk-ant-…`,
     // `sk-or-v1-…`, `sk-proj-…`, `sk-…`, e as do Google (`AIza…`).
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, '[CHAVE]')
-    .replace(/AIza[A-Za-z0-9_-]{10,}/g, '[CHAVE]')
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[CHAVE]")
+    .replace(/AIza[A-Za-z0-9_-]{10,}/g, "[CHAVE]")
     // O header inteiro, em qualquer caixa, com ou sem `Authorization:` na
     // frente — é assim que ele costuma aparecer ecoado num corpo de erro.
-    .replace(/[Bb]earer\s+[A-Za-z0-9._-]{8,}/g, 'Bearer [CHAVE]')
-    .replace(/(x-api-key|api[-_]?key|authorization)\s*[:=]\s*\S+/gi, '$1: [CHAVE]');
+    .replace(/[Bb]earer\s+[A-Za-z0-9._-]{8,}/g, "Bearer [CHAVE]")
+    .replace(/(x-api-key|api[-_]?key|authorization)\s*[:=]\s*\S+/gi, "$1: [CHAVE]");
   return scrubMessage(semSegredo).slice(0, 500);
 }
 
