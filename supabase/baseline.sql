@@ -9269,15 +9269,21 @@ alter table public.channel_sessions
   add column if not exists wacalls_jid text,
   add column if not exists wacalls_paired_at timestamptz;
 
+-- datafy (migration 0387, canal Datafy — recorte do #1130) — colunas do provider
+-- que espelha a Cloud API, nullable e antes das constraints que as referenciam.
+alter table public.channel_sessions
+  add column if not exists datafy_phone_number_id text,
+  add column if not exists datafy_waba_id text,
+  add column if not exists datafy_token_encrypted bytea;
+
 alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_check;
 
 alter table public.channel_sessions
   add constraint channel_sessions_provider_check
-  -- 'wacalls' (migration 0233, chamada de voz) e 'zernio_social' (migration
-  -- 0368, redes sociais nativas) somados AQUI — UM bloco só por constraint,
-  -- doutrina de baseline (não duplicar drop+add por migration).
-  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text, 'wacalls'::text, 'zernio_social'::text]));
+  -- 'wacalls' (0233), 'zernio_social' (0368) e 'datafy' (0387) somados AQUI —
+  -- UM bloco só por constraint (não duplicar drop+add por migration).
+  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text, 'wacalls'::text, 'zernio_social'::text, 'datafy'::text]));
 
 alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_ref_check;
@@ -9289,7 +9295,8 @@ alter table public.channel_sessions
     -- 'zernio_social' (migration 0368) endereça pelo MESMO `zernio_account_id`:
     -- é o mesmo intermediário, com outra superfície de canal.
     (provider in ('zernio', 'zernio_social') and zernio_account_id is not null) or
-    (provider = 'wacalls'    and wacalls_session_id    is not null)
+    (provider = 'wacalls'    and wacalls_session_id    is not null) or
+    (provider = 'datafy'     and datafy_phone_number_id is not null)
   );
 
 comment on column public.channel_sessions.zernio_account_id is
@@ -14243,7 +14250,7 @@ alter table public.webhook_events_log
   drop constraint if exists webhook_events_log_provider_check;
 alter table public.webhook_events_log
   add constraint webhook_events_log_provider_check check (provider in (
-    'waha', 'nuvemshop', 'generic', 'meta_cloud', 'zernio'
+    'waha', 'nuvemshop', 'generic', 'meta_cloud', 'zernio', 'datafy'
   ));
 
 -- ---- a marca da instalação sai do .env e vai para o banco (migration 0155) ----
@@ -36362,6 +36369,41 @@ alter table public.meta_templates
 comment on column public.meta_templates.saved_values is
   'Valores que o operador salvou para reaproveitar em todo disparo deste modelo, chaveados como template_values (slotKey: header:1, button0:1). Só link de mídia: a rota de escrita recusa valor de texto, que costuma ser dado de pessoa. Sobrevive à sincronização, que não lista esta coluna no upsert.';
 
+-- ---- canal de WhatsApp Datafy (migration 0387) ----
+-- Recorte do PR #1130, de @vgamkt. As COLUNAS e o VOCABULÁRIO dos CHECKs de
+-- `channel_sessions` (provider e ref) e de `webhook_events_log` vivem nos blocos
+-- ÚNICOS deles, lá em cima — doutrina "uma constraint, um bloco"
+-- (`tests/unit/baseline-constraint-reconstruida.test.ts`). Aqui só o que é desta
+-- migration e de mais ninguém: a dedup e o índice único entre ativos (desenho da
+-- 0165). A dedup roda ANTES do índice, para o `update.sh` de um banco que já
+-- tenha dois ativos com o mesmo número consertar em vez de quebrar.
+with ativos as (
+  select id,
+         row_number() over (
+           partition by datafy_phone_number_id
+           order by created_at desc nulls last, id desc
+         ) as posicao
+    from public.channel_sessions
+   where archived_at is null
+     and datafy_phone_number_id is not null
+)
+update public.channel_sessions s
+   set datafy_phone_number_id = s.datafy_phone_number_id || '-conflito-' || s.id::text
+  from ativos a
+ where a.id = s.id
+   and a.posicao > 1;
+
+create unique index if not exists channel_sessions_datafy_phone_number_id_ativo_unique
+  on public.channel_sessions (datafy_phone_number_id)
+  where archived_at is null and datafy_phone_number_id is not null;
+
+comment on column public.channel_sessions.datafy_phone_number_id is
+  'phone_number_id da WABA no canal Datafy (parceiro que espelha a Cloud API). É o sessionRef deste canal. Espelhado em lib/channels/session-ref.ts.';
+comment on column public.channel_sessions.datafy_token_encrypted is
+  'Token do Datafy (sk_live_…), cifrado por fn_encrypt_oauth. Nunca volta à tela depois de gravado.';
+
+-- ---- fim canal de WhatsApp Datafy (migration 0387) ----
+
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ DE PROPÓSITO, NENHUMA FUNÇÃO É CRIADA DEPOIS DESTE BLOCO. Apêndice que cria
@@ -36533,6 +36575,62 @@ comment on column public.platform_settings.divulgacao_de_pagamento is
 
 comment on column public.platform_settings.promessa_semantica is
   'true = cada envio passa por uma conferência de modelo antes de sair, para não prometer o que a empresa não cumpre (custa uma chamada de modelo por envio). null = a instalação não opinou; vale PROMISE_SEMANTIC_ENABLED do arquivo de ambiente (default do produto: true).';
+
+notify pgrst, 'reload schema';
+
+-- ---- cadastro com aprovação: pedidos de empresa nova (migration 0383) ----
+-- Recorte do PR #714, de @betoarts. Depois dos blocos 0253 e 0331 de propósito:
+-- a CHECK nova altera `platform_settings`, que precisa existir numa instalação
+-- NOVA. Em quem ATUALIZA, o `create table if not exists` da 0253 passa sem
+-- efeito e é o `drop constraint` + `add constraint` abaixo que leva o terceiro
+-- modo. Não cria função (o bloco da varredura anon fica acima sem prejuízo) e
+-- a tabela nova vem antes das travas do suporte, que são o último bloco.
+alter table public.platform_settings
+  drop constraint if exists platform_settings_signup_mode;
+alter table public.platform_settings
+  add constraint platform_settings_signup_mode
+  check (signup_mode in ('aberto', 'com_aprovacao', 'so_convite'));
+
+comment on column public.platform_settings.signup_mode is
+  'aberto = qualquer pessoa cria conta em /signup e abre a própria empresa (comportamento histórico). com_aprovacao = a conta é criada, mas a empresa só nasce quando o administrador da instalação aprova o pedido em /admin/cadastro (tabela registration_requests). so_convite = só quem chega com convite válido; sem convite, /signup recusa com tela e /auth/confirm NÃO provisiona organização.';
+
+create table if not exists public.registration_requests (
+  id                          uuid        primary key default gen_random_uuid(),
+  user_id                     uuid        not null references auth.users(id) on delete cascade,
+  requested_organization_name text        not null,
+  status                      text        not null default 'pending',
+  decided_by                  uuid        references auth.users(id) on delete set null,
+  decided_at                  timestamptz,
+  created_at                  timestamptz not null default now(),
+  updated_at                  timestamptz not null default now(),
+  constraint registration_requests_status check (status in ('pending', 'approved', 'rejected')),
+  constraint registration_requests_decision check (
+    (status = 'pending' and decided_at is null)
+    or (status in ('approved', 'rejected') and decided_at is not null)
+  )
+);
+
+comment on table public.registration_requests is
+  'Pedido de empresa nova numa instalação em signup_mode = com_aprovacao. Da INSTALAÇÃO, não do tenant (a organização ainda não existe): RLS ligada sem policy, lida e escrita só pelo servidor. Ver lib/auth/registration-requests.ts.';
+
+-- Um pedido pendente por conta: clique repetido no formulário não enfileira
+-- duplicata para o administrador.
+create unique index if not exists registration_requests_one_pending_per_user
+  on public.registration_requests (user_id)
+  where status = 'pending';
+
+create index if not exists registration_requests_pending_idx
+  on public.registration_requests (created_at)
+  where status = 'pending';
+
+alter table public.registration_requests enable row level security;
+revoke all on public.registration_requests from anon, authenticated;
+grant select, insert, update on public.registration_requests to service_role;
+
+drop trigger if exists trg_registration_requests_touch on public.registration_requests;
+create trigger trg_registration_requests_touch
+  before update on public.registration_requests
+  for each row execute function public.fn_touch_updated_at();
 
 notify pgrst, 'reload schema';
 
