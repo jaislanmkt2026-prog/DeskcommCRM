@@ -126,14 +126,16 @@ export interface WahaClientOpts {
   tetoMs?: number;
 }
 
-const sessionSnapshotSchema = z.object({
-  name: z.string(),
-  status: z.string(),
-  config: z.record(z.string(), z.unknown()).nullable().optional(),
-  engine: z.union([z.string(), z.object({ engine: z.string().optional() })]).optional(),
-  me: z.record(z.string(), z.unknown()).nullable().optional(),
-  qr: z.string().optional(),
-}).passthrough();
+const sessionSnapshotSchema = z
+  .object({
+    name: z.string(),
+    status: z.string(),
+    config: z.record(z.string(), z.unknown()).nullable().optional(),
+    engine: z.union([z.string(), z.object({ engine: z.string().optional() })]).optional(),
+    me: z.record(z.string(), z.unknown()).nullable().optional(),
+    qr: z.string().optional(),
+  })
+  .passthrough();
 
 export type WahaSessionSnapshot = z.infer<typeof sessionSnapshotSchema>;
 type SessionOperation = "create" | "start" | "stop" | "logout" | "delete";
@@ -152,13 +154,19 @@ export class WahaSessionError extends Error {
 const errorEnvelope = z.object({ statusCode: z.number(), error: z.string(), message: z.string() });
 
 /** Envelopes exatos observados/upstream; não há allowlist genérica de 409. */
-function knownSessionConflict(body: unknown, status: number, operation: SessionOperation, name: string): boolean {
+function knownSessionConflict(
+  body: unknown,
+  status: number,
+  operation: SessionOperation,
+  name: string,
+): boolean {
   const parsed = errorEnvelope.safeParse(body);
   if (!parsed.success || parsed.data.statusCode !== status) return false;
   const value = parsed.data;
   if (status === 404) return value.error === "Not Found" && value.message === "Session not found";
   if (status !== 422 || value.error !== "Unprocessable Entity") return false;
-  if (operation === "create") return value.message === `Session '${name}' already exists. Use PUT to update it.`;
+  if (operation === "create")
+    return value.message === `Session '${name}' already exists. Use PUT to update it.`;
   if (operation === "start") return value.message === `Session '${name}' is already started.`;
   return false;
 }
@@ -207,10 +215,17 @@ export class WahaClient {
     return describeWahaServer(await res.json().catch(() => null));
   }
 
-  private async sessionAfter(name: string, operation: SessionOperation, status: number): Promise<WahaSessionSnapshot | null> {
-    const res = await this.fetchComTeto(`${this.baseUrl}/api/sessions/${encodeURIComponent(name)}`, {
-      headers: { "X-Api-Key": this.apiKey },
-    });
+  private async sessionAfter(
+    name: string,
+    operation: SessionOperation,
+    status: number,
+  ): Promise<WahaSessionSnapshot | null> {
+    const res = await this.fetchComTeto(
+      `${this.baseUrl}/api/sessions/${encodeURIComponent(name)}`,
+      {
+        headers: { "X-Api-Key": this.apiKey },
+      },
+    );
     // O endpoint exato é a pós-condição de ausência; 404 de proxy/HTML não é.
     const body: unknown = await res.json().catch(() => null);
     if (res.status === 404 && knownSessionConflict(body, 404, operation, name)) return null;
@@ -235,8 +250,9 @@ export class WahaClient {
     const ignore = session.config.ignore;
     if (ignore === undefined) return true; // sessão legada; convergência preserva webhooks
     if (!ignore || typeof ignore !== "object" || Array.isArray(ignore)) return false;
-    return Object.entries(CONVERSAS_IGNORADAS).every(([key, value]) =>
-      !(key in ignore) || (ignore as Record<string, unknown>)[key] === value);
+    return Object.entries(CONVERSAS_IGNORADAS).every(
+      ([key, value]) => !(key in ignore) || (ignore as Record<string, unknown>)[key] === value,
+    );
   }
 
   /** Porta granular para a futura reserva: created nunca significa ownership. */
@@ -244,15 +260,23 @@ export class WahaClient {
     const res = await this.fetchComTeto(`${this.baseUrl}/api/sessions`, {
       method: "POST",
       headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ name, start: false, config: { ignore: CONVERSAS_IGNORADAS } }),
+      body: JSON.stringify({
+        name,
+        start: false,
+        config: { ignore: CONVERSAS_IGNORADAS, media: { autoDownload: true } },
+      }),
     });
-    if (!res.ok && !knownSessionConflict(await res.json().catch(() => null), res.status, "create", name)) {
+    if (
+      !res.ok &&
+      !knownSessionConflict(await res.json().catch(() => null), res.status, "create", name)
+    ) {
       throw new WahaSessionError("create", res.status);
     }
     // 404 não é conflito de create, mesmo que use envelope reconhecido.
     if (!res.ok && res.status !== 422) throw new WahaSessionError("create", res.status);
     const session = await this.sessionAfter(name, "create", res.status);
-    if (!session || !(await this.compatibleSession(session))) throw new WahaSessionError("create", res.status);
+    if (!session || !(await this.compatibleSession(session)))
+      throw new WahaSessionError("create", res.status);
     return { created: res.ok, session };
   }
 
@@ -260,37 +284,63 @@ export class WahaClient {
   async startSession(name: string): Promise<{ qr?: string; status: string }> {
     const creation = await this.createSession(name);
     const ignore = creation.session.config?.ignore;
-    const filtersCurrent = ignore && typeof ignore === "object" && Object.entries(CONVERSAS_IGNORADAS)
-      .every(([key, value]) => (ignore as Record<string, unknown>)[key] === value);
+    const filtersCurrent =
+      ignore &&
+      typeof ignore === "object" &&
+      Object.entries(CONVERSAS_IGNORADAS).every(
+        ([key, value]) => (ignore as Record<string, unknown>)[key] === value,
+      );
     if (!creation.created && !filtersCurrent) await this.convergirConfigDaSessao(name);
     return this.startExistingSession(name);
   }
 
   /** Não cria nem remove: a futura operação de reserva mantém seu próprio recibo. */
   async startExistingSession(name: string): Promise<WahaSessionSnapshot> {
-    const res = await this.fetchComTeto(`${this.baseUrl}/api/sessions/${encodeURIComponent(name)}/start`, {
-      method: "POST",
-      headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    if (!res.ok && !(res.status === 422 && knownSessionConflict(await res.json().catch(() => null), res.status, "start", name))) {
+    const res = await this.fetchComTeto(
+      `${this.baseUrl}/api/sessions/${encodeURIComponent(name)}/start`,
+      {
+        method: "POST",
+        headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    if (
+      !res.ok &&
+      !(
+        res.status === 422 &&
+        knownSessionConflict(await res.json().catch(() => null), res.status, "start", name)
+      )
+    ) {
       throw new WahaSessionError("start", res.status);
     }
     const session = await this.sessionAfter(name, "start", res.status);
-    if (!session || !["STARTING", "SCAN_QR_CODE", "WORKING"].includes(session.status) || !(await this.compatibleSession(session))) {
+    if (
+      !session ||
+      !["STARTING", "SCAN_QR_CODE", "WORKING"].includes(session.status) ||
+      !(await this.compatibleSession(session))
+    ) {
       throw new WahaSessionError("start", res.status);
     }
     return session;
   }
 
-  private async finishSession(name: string, operation: "stop" | "logout" | "delete"): Promise<void> {
+  private async finishSession(
+    name: string,
+    operation: "stop" | "logout" | "delete",
+  ): Promise<void> {
     const path = `/api/sessions/${encodeURIComponent(name)}${operation === "delete" ? "" : `/${operation}`}`;
     const res = await this.fetchComTeto(`${this.baseUrl}${path}`, {
       method: operation === "delete" ? "DELETE" : "POST",
       headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json" },
       ...(operation === "delete" ? {} : { body: JSON.stringify({}) }),
     });
-    if (!res.ok && !(res.status === 404 && knownSessionConflict(await res.json().catch(() => null), res.status, operation, name))) {
+    if (
+      !res.ok &&
+      !(
+        res.status === 404 &&
+        knownSessionConflict(await res.json().catch(() => null), res.status, operation, name)
+      )
+    ) {
       throw new WahaSessionError(operation, res.status);
     }
     const session = await this.sessionAfter(name, operation, res.status);
@@ -301,7 +351,12 @@ export class WahaClient {
     // me preenchido não provam descarte de credenciais. STARTING sem me é a
     // retomada do transporte após logout, não promessa de canal conectado.
     // https://waha.devlike.pro/docs/how-to/sessions/#logout-session
-    if (operation === "logout" && ["STOPPED", "STARTING", "SCAN_QR_CODE"].includes(session.status) && session.me === null) return;
+    if (
+      operation === "logout" &&
+      ["STOPPED", "STARTING", "SCAN_QR_CODE"].includes(session.status) &&
+      session.me === null
+    )
+      return;
     throw new WahaSessionError(operation, res.status);
   }
 
@@ -351,8 +406,15 @@ export class WahaClient {
         return;
       }
       const parsed = sessionSnapshotSchema.safeParse(await atual.json().catch(() => null));
-      if (!parsed.success || parsed.data.name !== name || !(await this.compatibleSession(parsed.data))) {
-        logger.warn("[waha] a sessão respondeu sem identidade/config compatíveis; não vou reescrevê-la", {});
+      if (
+        !parsed.success ||
+        parsed.data.name !== name ||
+        !(await this.compatibleSession(parsed.data))
+      ) {
+        logger.warn(
+          "[waha] a sessão respondeu sem identidade/config compatíveis; não vou reescrevê-la",
+          {},
+        );
         return;
       }
       const sessao = parsed.data;
@@ -400,9 +462,12 @@ export class WahaClient {
   }
 
   async getSessionQr(name: string): Promise<{ qr?: string; status: string }> {
-    const res = await this.fetchComTeto(`${this.baseUrl}/api/sessions/${encodeURIComponent(name)}`, {
-      headers: { "X-Api-Key": this.apiKey },
-    });
+    const res = await this.fetchComTeto(
+      `${this.baseUrl}/api/sessions/${encodeURIComponent(name)}`,
+      {
+        headers: { "X-Api-Key": this.apiKey },
+      },
+    );
     if (!res.ok) throw new Error(`waha_${res.status}`);
     return (await res.json()) as { qr?: string; status: string };
   }
@@ -575,7 +640,11 @@ export class WahaClient {
     if (!res.ok) {
       throw new Error(`waha_${res.status}`);
     }
-    return res.json() as Promise<{ numberExists: boolean; chatId?: string | null; pn?: string | null }>;
+    return res.json() as Promise<{
+      numberExists: boolean;
+      chatId?: string | null;
+      pn?: string | null;
+    }>;
   }
 
   async sendContactVcard(
@@ -611,11 +680,15 @@ export class WahaClient {
     // o WAHA roda ffmpeg e baixa a URL do Storage antes de responder. Com o teto
     // de texto, o envio de áudio legítimo seria cortado — o conserto do timeout
     // viraria um defeito novo, e mais silencioso que o original.
-    const res = await this.fetchComTeto(`${this.baseUrl}/api/${plan.endpoint}`, {
-      method: "POST",
-      headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ session, chatId, ...plan.payload }),
-    }, TETO_DE_MIDIA_MS);
+    const res = await this.fetchComTeto(
+      `${this.baseUrl}/api/${plan.endpoint}`,
+      {
+        method: "POST",
+        headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ session, chatId, ...plan.payload }),
+      },
+      TETO_DE_MIDIA_MS,
+    );
     if (!res.ok) {
       throw new Error(`waha_${res.status}`);
     }

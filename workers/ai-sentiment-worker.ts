@@ -29,7 +29,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const SENTIMENT_MODEL = DEFAULT_CLASSIFIER_MODEL; // "anthropic/claude-haiku-4-5"
 const DEFAULT_SENTIMENT_THRESHOLD = 0.3;
-const CLASSIFY_TIMEOUT_MS = 5_000;
+/**
+ * Teto de classificação configurável: o gateway da instalação (ghostcli.dev)
+ * responde com pico medido de ~4,2 s, e o default de 5 s abortava chamadas
+ * legítimas na borda. Env `CLASSIFY_TIMEOUT_MS` ajusta sem rebuild.
+ */
+const CLASSIFY_TIMEOUT_MS = Number(process.env.CLASSIFY_TIMEOUT_MS ?? 12_000);
 
 // As descrições NÃO são decoração: viram o JSON Schema da ferramenta que o
 // provider manda ao modelo. Sem elas o `.max(100)` existia só no validador — o
