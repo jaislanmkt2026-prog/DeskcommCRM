@@ -79,6 +79,11 @@ export const PUBLIC_PATHS: RegExp[] = [
   // `GET` da listagem, não `/api/v1/contacts/[id]` nem `/import`, que ainda
   // não têm suporte a Bearer.
   /^\/api\/v1\/contacts$/,
+  // Integracoes locais Time Chaves/Squad100: autenticacao Bearer dsk_
+  // com scopes dedicados dentro das proprias rotas; o proxy apenas deixa passar.
+  /^\/api\/v1\/integrations\/time-chaves\/state$/,
+  /^\/api\/v1\/integrations\/time-chaves\/events$/,
+  /^\/api\/v1\/integrations\/squad100\/artifacts$/,
   // ENVIO SERVER-TO-SERVER. Mesma dualidade de `/api/v1/contacts` acima, com
   // `mcp:write` em vez de `mcp:read`: sessão de navegador OU Bearer `dsk_…`,
   // resolvidos por `lib/api/auth-dual.ts` DENTRO de cada rota, com a org saindo

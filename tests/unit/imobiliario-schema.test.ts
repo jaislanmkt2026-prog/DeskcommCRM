@@ -38,7 +38,9 @@ describe("qualificacao_imobiliaria schema", () => {
     };
     const faixaResult = validarFaixaValor(incoerente);
     expect(faixaResult.ok).toBe(false);
-    expect(faixaResult.error).toContain("faixa_valor_min_cents");
+    if (!faixaResult.ok) {
+      expect(faixaResult.error).toContain("faixa_valor_min_cents");
+    }
   });
 
   it("aceita campos opcionais ausentes", () => {
@@ -92,9 +94,9 @@ describe("mergeQualificacaoParcial", () => {
   it("lança erro se faixa de valor for incoerente", () => {
     const existing = {};
     const patchIncoerente = {
-      finalidade: "investimento_aluguel",
-      tipo_imovel: "apartamento",
-      estagio_qualificacao: "inicial",
+      finalidade: "investimento_aluguel" as const,
+      tipo_imovel: "apartamento" as const,
+      estagio_qualificacao: "inicial" as const,
       ultima_atualizacao: new Date().toISOString(),
       faixa_valor_min_cents: 50000000,
       faixa_valor_max_cents: 30000000,

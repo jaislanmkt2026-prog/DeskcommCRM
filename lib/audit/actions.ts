@@ -182,6 +182,8 @@ export const AUDIT_ACTIONS = [
   "platform_admin.user_viewed",
   "platform_admin.platform_admins_listed",
   "mcp.tool_called",
+  "integration.time_chaves.event_received",
+  "integration.squad100.artifact_received",
   "ai.credential_created",
   "ai.credential_deleted",
   "ai.credential_revalidated",

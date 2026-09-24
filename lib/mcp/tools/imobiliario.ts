@@ -89,9 +89,7 @@ export const crmSaveLeadPreferences: McpToolDefinition = {
     }
 
     // Merge parcial seguro com validação Zod
-    const merged = mergeQualificacaoParcial(lead.custom_fields as Record<string, unknown> | null, {
-      qualificacao_imobiliaria,
-    });
+    const merged = mergeQualificacaoParcial(lead.custom_fields as Record<string, unknown> | null, qualificacao_imobiliaria ?? {});
 
     // Persiste
     const { error: updateErr } = await supabase
@@ -107,7 +105,7 @@ export const crmSaveLeadPreferences: McpToolDefinition = {
     return {
       ok: true,
       message: "Preferências salvas com sucesso",
-      ultima_atualizacao: merged.qualificacao_imobiliaria?.ultima_atualizacao,
+      ultima_atualizacao: merged.ultima_atualizacao,
     };
   },
 };
@@ -370,7 +368,7 @@ export const crmGetUnitPrice: McpToolDefinition = {
   requiresScope: "mcp:read",
   handler: async (args, ctx) => {
     const { orgId, supabase } = getCtxResources(ctx);
-    return await consultarPrecoUnidadeVigente(supabase, orgId, args.unit_id);
+    return await consultarPrecoUnidadeVigente(supabase, orgId, args.unit_id as string);
   },
 };
 
@@ -462,7 +460,7 @@ export const crmRequestHandoffImobiliario: McpToolDefinition = {
   requiresScope: "mcp:write",
   handler: async (args, ctx) => {
     const { orgId, supabase } = getCtxResources(ctx);
-    const { conversation_id, reason, urgency, target_user_id, briefing_imobiliario } = args;
+    const { conversation_id, reason, urgency, target_user_id, briefing_imobiliario } = args as z.infer<typeof requestHandoffInput>;
 
     // Enriquece o motivo com dados imobiliários se disponíveis
     let motivoTexto = reason;
@@ -496,10 +494,18 @@ export const crmRequestHandoffImobiliario: McpToolDefinition = {
       conversationId: conversation_id,
       organizationId: orgId,
       reason: "requested_human",
-      origem: "mcp_imobiliario",
-      motivoTexto,
-      leadId: briefing_imobiliario?.lead_id ?? null,
-      metadata: briefing_imobiliario ? { briefing_imobiliario } : {},
+      origem: "mcp_externo",
+      declarado: briefing_imobiliario
+        ? {
+            cliente_quer: [
+              briefing_imobiliario.empreendimento_interesse,
+              briefing_imobiliario.unidade_ref,
+              briefing_imobiliario.condicoes_especiais,
+            ]
+              .filter(Boolean)
+              .join(" | ") || null,
+          }
+        : undefined,
     });
 
     return {
