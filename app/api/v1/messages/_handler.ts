@@ -600,6 +600,47 @@ export async function sendMessageHandler(
     citada = alvo as { id: string; external_id: string | null };
   }
 
+  // Guardrails de Saída da IA (Lia - Spec 19 / Missão 5D)
+  // Executa ANTES da persistência e do envio para garantir que o MESMO texto sanitizado
+  // seja persistido no banco, enviado pelo adapter e registrado no audit log.
+  const isAiMessage =
+    ctx.actor.type === "ai_agent" ||
+    Boolean(ctx.agentOperation) ||
+    origemDaMensagem(ctx.actor) === "ai";
+
+  if (
+    isAiMessage &&
+    (input.type === "text" || !input.type) &&
+    typeof input.body === "string" &&
+    input.body.trim().length > 0
+  ) {
+    const { aplicarGuardrailLiaOutbound } = await import(
+      "@/lib/agent-engine/guardrails/lia-outbound-guard"
+    );
+
+    const receipts =
+      (input.metadata?.tool_receipts as any[]) ?? (ctx as any).toolReceipts ?? [];
+
+    const guardResult = aplicarGuardrailLiaOutbound(input.body, {
+      actorType: ctx.actor.type,
+      isAiAgent: true,
+      toolReceipts: receipts,
+    });
+
+    if (guardResult.blocked) {
+      throw new ApiError(
+        422,
+        guardResult.blockReason || "lia_guardrail_bloqueado",
+        undefined,
+        ctx.requestId,
+        traduzir("Mensagem bloqueada pelos guardrails de segurança.", ctx.idioma ?? "pt-BR"),
+      );
+    }
+
+    // Atualiza input.body com o texto sanitizado (PII redigido ou fail-safe de preço aplicado)
+    input.body = guardResult.body;
+  }
+
   const insertRow = {
     ...(ctx.internalMessageId ? { id: ctx.internalMessageId } : {}),
     organization_id: c.organization_id,

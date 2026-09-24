@@ -64,14 +64,4 @@ export const TOOLS_FUNIL = declararTools([
     risco: "atencao",
     pacotes: ["vender"],
   },
-  {
-    name: "crm_move_lead_stage",
-    category: "write",
-    rotulo: "Mover oportunidade de etapa",
-    explicacao:
-      "Move a oportunidade para outra etapa do funil, registrando o avanço da negociação ou a perda do negócio.",
-    oQueToca: "Funil de vendas",
-    risco: "atencao",
-    pacotes: ["vender"],
-  },
 ]);

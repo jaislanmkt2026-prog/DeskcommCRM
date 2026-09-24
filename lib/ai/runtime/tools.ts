@@ -185,7 +185,7 @@ function wrapMcpTool(
         const result = await def.handler(argsRecord as never, input.ctx);
 
         // Capture handoff signal so the runtime can short-circuit the loop.
-        if (def.name === HANDOFF_TOOL_NAME) {
+        if (def.name === HANDOFF_TOOL_NAME || def.name === "crm_request_handoff_imobiliario") {
           input.handoffSignal.triggered = true;
           input.handoffSignal.reason = String(argsRecord.reason ?? "requested_human");
           input.handoffSignal.urgency = String(argsRecord.urgency ?? "normal");

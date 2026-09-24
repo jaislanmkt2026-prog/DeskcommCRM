@@ -17,21 +17,11 @@ import {
   crmGetConversation,
   crmGetConversationHistory,
 } from "./conversations";
-import {
-  crmListLeads,
-  crmGetLead,
-  crmCreateLead,
-  crmUpdateLead,
-  crmMoveLeadStage,
-} from "./leads";
+import { crmListLeads, crmGetLead, crmCreateLead, crmUpdateLead, crmMoveLeadStage } from "./leads";
 import { crmListPipelines } from "./pipelines";
 import { crmSendWhatsappMessage } from "./messages";
 import { crmStartConversationAndSend } from "./start-conversation";
-import {
-  crmAssignConversation,
-  crmManageTags,
-  crmGetQueueStatus,
-} from "./governance";
+import { crmAssignConversation, crmManageTags, crmGetQueueStatus } from "./governance";
 import {
   crmListAvailableAttendants,
   crmListHumanCases,
@@ -79,6 +69,18 @@ import {
   crmRescheduleAppointment,
   crmSetAppointmentOutcome,
 } from "./agendamento";
+import {
+  crmSaveLeadPreferences,
+  crmListDevelopments,
+  crmGetDevelopment,
+  crmListAvailableUnits,
+  crmGetUnit,
+  crmGetUnitPrice,
+  crmSaveAttendanceSummary,
+  crmRequestHandoffImobiliario,
+  crmGetDocumentChecklist,
+  crmUpdateDocumentChecklistItem,
+} from "./imobiliario";
 import {
   crmScheduleFollowup,
   crmEnrollFollowupFlow,
@@ -165,6 +167,17 @@ export const allTools: ReadonlyArray<McpToolDefinition> = [
   crmAddCaseNote,
   crmCloseHumanCase,
   crmResumeAiAttendance,
+  // imobiliario
+  crmSaveLeadPreferences,
+  crmListDevelopments,
+  crmGetDevelopment,
+  crmListAvailableUnits,
+  crmGetUnit,
+  crmGetUnitPrice,
+  crmSaveAttendanceSummary,
+  crmRequestHandoffImobiliario,
+  crmGetDocumentChecklist,
+  crmUpdateDocumentChecklistItem,
   // handoff (special)
   crmRequestHumanHandoff,
 ] as unknown as ReadonlyArray<McpToolDefinition>;
