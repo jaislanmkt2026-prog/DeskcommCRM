@@ -1,3 +1,12 @@
+-- STATUS: DEPRECATED BEFORE APPLY
+-- DO NOT APPLY AS-IS
+-- MOTIVO: contém arquitetura duplicada de proposal/reservation.
+--         A série canônica aprovada é property_proposals / property_reservations
+--         (migration 0383). As tabelas real_estate_property_proposals e
+--         real_estate_property_reservations desta migration NÃO devem ser criadas.
+--         Entidades úteis (credit_analyses, business_plans, reservation_events)
+--         podem ser extraídas futuramente em migration própria.
+--
 -- 0384 — fluxo de negócio imobiliário (pós-handoff)
 --
 -- Entidades: credit_analyses, business_plans, property_proposals,
