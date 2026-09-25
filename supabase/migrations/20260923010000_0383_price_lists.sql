@@ -101,3 +101,24 @@ drop policy if exists "tenant_isolation_real_estate_price_list_items_all" on pub
 create policy "tenant_isolation_real_estate_price_list_items_all" on public.real_estate_price_list_items
   for all using (organization_id in (select public.fn_user_org_ids()))
   with check (organization_id in (select public.fn_user_org_ids()));
+
+-- ─── 4. FK idempotente: property_proposals.price_list_id → real_estate_price_lists ──
+-- Adicionada aqui porque property_proposals é criada em 0383_property_proposals_reservations
+-- (timestamp anterior), mas a tabela real_estate_price_lists só existe após esta migration.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'property_proposals'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_schema = 'public'
+      AND constraint_name = 'property_proposals_price_list_id_fkey'
+      AND table_name = 'property_proposals'
+  ) THEN
+    ALTER TABLE public.property_proposals
+      ADD CONSTRAINT property_proposals_price_list_id_fkey
+      FOREIGN KEY (price_list_id) REFERENCES public.real_estate_price_lists(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
