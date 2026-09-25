@@ -16,7 +16,14 @@ import type { ModuloOpcional } from "@/lib/instalacao/modulos";
  * Doutrina: docs/doctrine/sistema-vivo.md — "por qual porta se chega até mim?"
  */
 
-export type NavGroupId = "atendimento" | "crm" | "ia" | "canais" | "analise" | "organizacao";
+export type NavGroupId =
+  | "atendimento"
+  | "crm"
+  | "imobiliario"
+  | "ia"
+  | "canais"
+  | "analise"
+  | "organizacao";
 
 export interface NavGroup {
   id: NavGroupId;
@@ -75,6 +82,7 @@ export interface NavMetadata {
 export const NAV_GROUPS: NavGroup[] = [
   { id: "atendimento", label: "Atendimento" },
   { id: "crm", label: "CRM", hub: { href: "/app/crm", label: "Ver tudo em CRM" } },
+  { id: "imobiliario", label: "Imobiliário" },
   { id: "ia", label: "Agente de IA", hub: { href: "/app/ai", label: "Ver tudo em IA" } },
   { id: "canais", label: "Canais" },
   { id: "analise", label: "Análise", hub: { href: "/app/analise", label: "Ver tudo em Análise" } },
@@ -395,6 +403,16 @@ export const NAV_CATALOG = [
     // Tarefas se abrem todo dia. É esse o corte que decide quem fica no menu.
   },
 
+  // ---- Imobiliário — operação de imóveis ----
+  {
+    href: "/app/imobiliario",
+    label: "Visão geral",
+    description: "Resumo da base imobiliária local, com empreendimentos, unidades e operação.",
+    icon: "House",
+    group: "imobiliario",
+    sidebar: true,
+  },
+
   // ---- Agente de IA — montar, ensinar, acompanhar ----
   {
     href: "/app/ai/agents",
@@ -414,7 +432,9 @@ export const NAV_CATALOG = [
     group: "ia",
     section: "Montar o agente",
     minRole: "manager",
-    sidebar: true,
+    // Configuração do agente: continua no inventário "Ver tudo em IA" e no ⌘K.
+    // Com o novo grupo Imobiliário, esta segunda linha recupera a folga medida
+    // em 1280×900 sem comprimir a densidade do menu.
   },
   {
     href: "/app/ai/routers",
@@ -424,7 +444,9 @@ export const NAV_CATALOG = [
     group: "ia",
     section: "Montar o agente",
     minRole: "manager",
-    sidebar: true,
+    // O hub de IA já é o inventário deste grupo. A entrada imobiliária adiciona
+    // um grupo inteiro ao menu; manter também Roteadores aqui faz a navegação
+    // voltar a rolar em 1280×900. A rota continua em "Ver tudo em IA" e no ⌘K.
   },
   {
     href: "/app/ai/credentials",

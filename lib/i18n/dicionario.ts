@@ -761,6 +761,7 @@ export const DICIONARIO: Traducoes = {
   // como está. Achado pelo cruzamento novo entre DICIONARIO e NAV_GROUPS.
   Atendimento: { es: "Atención" },
   CRM: { es: "CRM" },
+  Imobiliário: { es: "Inmobiliario" },
   "Agente de IA": { es: "Agente de IA" },
   Canais: { es: "Canales" },
   Análise: { es: "Análisis" },
@@ -6270,6 +6271,9 @@ export const DICIONARIO: Traducoes = {
   "Contato anonimizado (LGPD)": { es: "Contacto anonimizado (LGPD)" },
   "edição bloqueada.": { es: "edición bloqueada." },
   "Visão geral": { es: "Resumen" },
+  "Resumo da base imobiliária local, com empreendimentos, unidades e operação.": {
+    es: "Resumen de la base inmobiliaria local, con desarrollos, unidades y operación.",
+  },
   "Última atividade": { es: "Última actividad" },
   "Direito ao esquecimento (LGPD)": { es: "Derecho al olvido (LGPD)" },
   "A anonimização é irreversível. Use somente após confirmação formal do titular ou ordem judicial.": {

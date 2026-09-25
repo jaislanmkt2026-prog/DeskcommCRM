@@ -209,9 +209,9 @@ export function SidebarContent({
         arquivo mudou por causa disso. Sobrou 19px de folga — a mesma que havia
         antes de Atividades chegar.
 
-        Ficam sem hub Atendimento e Canais (4 e 2 destinos quando isto foi
-        medido) — em qualquer um deles, o quinto destino é que cria o hub, nunca
-        mais densidade raspada. A conta é fechada e vale conferir antes de abrir
+        Ficam sem hub Atendimento, Imobiliário e Canais (4, 1 e 2 destinos quando
+        isto foi medido) — em qualquer um deles, o quinto destino é que cria o hub,
+        nunca mais densidade raspada. A conta é fechada e vale conferir antes de abrir
         o PR: cada linha custa 32px (28px de altura + 4px de `space-y-1`), e
         trocar N destinos do menu por um único link de hub devolve (N-1)×32px.
       */}
