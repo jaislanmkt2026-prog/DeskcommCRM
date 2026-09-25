@@ -34,17 +34,25 @@ export async function authorizeIntegration(
 
 /**
  * UUID determinístico para idempotência de eventos externos sem tabela paralela.
- * O mesmo tenant/source/correlationId sempre produz a mesma PK em api_audit_log.
+ * O mesmo tenant/source/correlationId/eventType sempre produz a mesma PK em api_audit_log.
+ * eventType é obrigatório para evitar colisão entre task.started e task.completed com mesmo correlation_id.
  */
 export function deterministicAuditId(
   organizationId: string,
   source: string,
   correlationId: string,
+  eventType: string,
 ): string {
   const hex = createHash("sha256")
-    .update(`${organizationId}:${source}:${correlationId}`)
+    .update(`${organizationId}:${source}:${correlationId}:${eventType}`)
     .digest("hex")
     .slice(0, 32);
 
-  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20, 32)].join("-");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
 }

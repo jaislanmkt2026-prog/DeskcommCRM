@@ -21,16 +21,22 @@ describe("Time Chaves / Squad100 integration contract", () => {
     expect(AUDIT_ACTIONS).toContain("integration.squad100.artifact_received");
   });
 
-  it("derives a stable idempotency id from tenant/source/correlation", () => {
-    const a = deterministicAuditId("org-a", "time_chaves", "task:123");
-    const b = deterministicAuditId("org-a", "time_chaves", "task:123");
+  it("derives a stable idempotency id from tenant/source/correlation/eventType", () => {
+    const a = deterministicAuditId("org-a", "time_chaves", "task:123", "task.started");
+    const b = deterministicAuditId("org-a", "time_chaves", "task:123", "task.started");
     expect(a).toBe(b);
     expect(a).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
   });
 
+  it("produces distinct ids for different event types with same correlation_id", () => {
+    const started = deterministicAuditId("org-a", "time_chaves", "task:123", "task.started");
+    const completed = deterministicAuditId("org-a", "time_chaves", "task:123", "task.completed");
+    expect(started).not.toBe(completed);
+  });
+
   it("changes the id across source or tenant boundaries", () => {
-    const base = deterministicAuditId("org-a", "time_chaves", "same");
-    expect(deterministicAuditId("org-b", "time_chaves", "same")).not.toBe(base);
-    expect(deterministicAuditId("org-a", "squad100", "same")).not.toBe(base);
+    const base = deterministicAuditId("org-a", "time_chaves", "same", "task.started");
+    expect(deterministicAuditId("org-b", "time_chaves", "same", "task.started")).not.toBe(base);
+    expect(deterministicAuditId("org-a", "squad100", "same", "artifact.received")).not.toBe(base);
   });
 });
