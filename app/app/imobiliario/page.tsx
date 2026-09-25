@@ -26,6 +26,13 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Imobiliário" };
 
+// Quarentena explícita da fixture de homologação encontrada no banco em
+// 25/09/2026. O schema de empreendimentos/unidades ainda não possui um campo
+// canônico de origem/ambiente; filtrar por nome, cidade ou construtora poderia
+// esconder um cadastro comercial legítimo. Quando o schema ganhar essa
+// classificação, este ID deve sair daqui e o filtro deve usar o marcador real.
+const HOMOLOGATION_DEVELOPMENT_ID = "a1b2c3d4-e5f6-47a8-b9c0-d1e2f3a4b5c6";
+
 interface KpiProps {
   label: string;
   value: number;
@@ -69,20 +76,24 @@ export default async function ImobiliarioPage() {
     supabase
       .from("real_estate_developments")
       .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId),
-    supabase
-      .from("real_estate_units")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId),
+      .eq("organization_id", orgId)
+      .neq("id", HOMOLOGATION_DEVELOPMENT_ID),
     supabase
       .from("real_estate_units")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", orgId)
+      .neq("development_id", HOMOLOGATION_DEVELOPMENT_ID),
+    supabase
+      .from("real_estate_units")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .neq("development_id", HOMOLOGATION_DEVELOPMENT_ID)
       .eq("status", "disponivel"),
     supabase
       .from("real_estate_price_lists")
       .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId),
+      .eq("organization_id", orgId)
+      .neq("development_id", HOMOLOGATION_DEVELOPMENT_ID),
     supabase
       .from("third_party_properties")
       .select("id", { count: "exact", head: true })
@@ -99,6 +110,7 @@ export default async function ImobiliarioPage() {
       .from("real_estate_developments")
       .select("id, nome, cidade, bairro, status, updated_at")
       .eq("organization_id", orgId)
+      .neq("id", HOMOLOGATION_DEVELOPMENT_ID)
       .order("updated_at", { ascending: false })
       .limit(4),
   ]);
@@ -121,19 +133,19 @@ export default async function ImobiliarioPage() {
     {
       label: t("Empreendimentos"),
       value: empreendimentos.count ?? 0,
-      detail: t("cadastrados nesta organização"),
+      detail: t("empreendimentos comerciais cadastrados"),
       icon: Buildings,
     },
     {
       label: t("Unidades"),
       value: unidades.count ?? 0,
-      detail: t("unidades na base local"),
+      detail: t("unidades comerciais na base local"),
       icon: House,
     },
     {
       label: t("Disponíveis"),
       value: disponiveis.count ?? 0,
-      detail: t("marcadas como disponíveis localmente"),
+      detail: t("disponíveis para a operação comercial"),
       icon: CheckCircle,
     },
     {
@@ -163,7 +175,8 @@ export default async function ImobiliarioPage() {
   ];
 
   const vazios = [
-    tabelasPreco.count === 0 ? t("Nenhuma tabela de preço cadastrada.") : null,
+    disponiveis.count === 0 ? t("Nenhuma unidade comercial disponível.") : null,
+    tabelasPreco.count === 0 ? t("Nenhuma tabela de preço oficial cadastrada.") : null,
     terceiros.count === 0 ? t("Nenhum imóvel de terceiro cadastrado.") : null,
     documentos.count === 0 ? t("Nenhum documento imobiliário cadastrado.") : null,
     negociacoes.count === 0 ? t("Nenhuma negociação imobiliária registrada.") : null,
@@ -186,6 +199,9 @@ export default async function ImobiliarioPage() {
           {t(
             "Disponibilidade e preços abaixo vêm da base local desta organização e não representam, por si só, estoque oficial do CV CRM.",
           )}
+        </p>
+        <p className="max-w-4xl text-xs text-muted-foreground">
+          {t("Dados de homologação conhecidos ficam fora dos KPIs e listagens desta visão.")}
         </p>
       </header>
 
@@ -247,9 +263,9 @@ export default async function ImobiliarioPage() {
               <div className="flex items-start gap-3 py-4">
                 <House size={20} weight="duotone" className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
                 <div>
-                  <p className="text-sm font-medium">{t("Nenhum empreendimento cadastrado")}</p>
+                  <p className="text-sm font-medium">{t("Nenhum empreendimento real cadastrado.")}</p>
                   <p className="text-xs text-muted-foreground">
-                    {t("A base local desta organização ainda não possui empreendimentos.")}
+                    {t("A base operacional desta organização ainda não possui empreendimentos comerciais.")}
                   </p>
                 </div>
               </div>
