@@ -6368,10 +6368,24 @@ create index if not exists idx_send_ledger_recent on send_ledger (organization_i
 create or replace function fn_agent_versions_immutable() returns trigger
 language plpgsql as $fn$
 begin
+  -- `skill_versions.pointer_id` só existe em instalações legadas. Quando o
+  -- ponteiro é apagado, a FK o limpa para preservar o histórico; nenhum outro
+  -- campo pode mudar. Nas demais tabelas de versões este ramo nem é avaliado.
+  if tg_table_name = 'skill_versions'
+     and (to_jsonb(old) ->> 'pointer_id') is not null
+     and (to_jsonb(new) ->> 'pointer_id') is null
+     and (to_jsonb(old) - 'pointer_id') is not distinct from (to_jsonb(new) - 'pointer_id') then
+    return new;
+  end if;
+
   raise exception '% é imutável: mudança = versão nova; rollback = mover o ponteiro (%)',
     tg_table_name, replace(tg_table_name, '_versions', '_pointers');
 end;
 $fn$;
+
+-- Função exclusiva de trigger: nenhuma sessão deve chamá-la como RPC.
+revoke execute on function public.fn_agent_versions_immutable()
+  from public, anon, authenticated, service_role;
 
 -- ============================================================================
 -- 0004 — playbook em camadas versionado + carga por ponteiro. 1 linha por CAMADA
@@ -38401,6 +38415,23 @@ alter table public.messages
 comment on column public.messages.sent_on_behalf_of_user_id is
   'Autoria "em nome de" (#1613, migration 0416): a PESSOA — membro ativo agent+ da organização — em nome de quem um token enviou esta mensagem. null em todo envio direto. Só a rota POST /api/v1/messages grava, e só com o escopo messages:on_behalf; o balão mostra "Fulano · via {token}" a partir de metadata.sent_on_behalf.';
 
+-- ---- motivo de ganho nativo (migration 0420, issue #1536) ----
+--
+-- Coluna nova, nullable, sem backfill e sem policy nova — a RLS por organização
+-- já cobre a linha de `crm_leads`. SEM CHECK e SEM trigger de propósito: a
+-- obrigatoriedade é opt-in por funil (`settings.won_reason_required`) e o
+-- vocabulário é `settings.won_reasons`, ambos decididos no servidor
+-- (`lib/leads/campos-exigidos.ts`) — uma CHECK aqui tornaria o motivo exigido
+-- para todo install, inclusive os que nunca cadastraram lista nenhuma. A CHECK
+-- da PERDA (`crm_leads_lost_reason_required`) é de outra issue (#917) e não
+-- muda. Idempotente porque o `update.sh` do clone re-executa este bloco a cada
+-- atualização. Fica antes da varredura de `anon`, como todo apêndice novo.
+alter table public.crm_leads
+  add column if not exists won_reason text;
+
+comment on column public.crm_leads.won_reason is
+  'Motivo do ganho (issue #1536, migration 0420): por que este negócio foi fechado como ganho. null quando ninguém informou. Texto livre por padrão; settings.won_reasons do funil transforma em lista e settings.won_reason_required liga a obrigatoriedade — as duas decididas no servidor (lib/leads/campos-exigidos.ts), nunca por CHECK: o ganho não tinha exigência nenhuma antes e não pode ganhar uma para o install inteiro.';
+
 -- ---- publicar agente com o provedor personalizado (migration 0418, #1642) ----
 -- Para `custom`, o modelo é conferido na lista que o PRÓPRIO endpoint devolveu
 -- (`models_available` da credencial da versão), não no catálogo global
@@ -39701,6 +39732,96 @@ begin
   end if;
 end $$;
 
+-- ---- ponteiros legados de skills (migration 0422) ----
+alter table public.skill_pointers
+  add column if not exists name text;
+
+alter table public.skill_pointers
+  add column if not exists version_id uuid;
+
+do $reconciliar_skill_pointers$
+begin
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'skill_pointers' and column_name = 'slug'
+  ) then
+    execute $sql$
+      update public.skill_pointers set name = slug where name is null and slug is not null
+    $sql$;
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'skill_pointers' and column_name = 'active_version_id'
+  ) then
+    execute $sql$
+      update public.skill_pointers
+         set version_id = active_version_id
+       where version_id is null and active_version_id is not null
+    $sql$;
+  end if;
+end
+$reconciliar_skill_pointers$;
+
+do $skill_pointer_fk$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.skill_pointers'::regclass
+       and conname = 'skill_pointers_version_id_fkey'
+  ) then
+    alter table public.skill_pointers
+      add constraint skill_pointers_version_id_fkey
+      foreign key (version_id) references public.skill_versions(id) not valid;
+  end if;
+end
+$skill_pointer_fk$;
+
+create unique index if not exists uniq_skill_pointers_org
+  on public.skill_pointers (organization_id, name) where organization_id is not null;
+create unique index if not exists uniq_skill_pointers_platform
+  on public.skill_pointers (name) where organization_id is null;
+
+-- ---- versões imutáveis de skills sobrevivem ao ponteiro legado (migration 0424) ----
+do $skill_versions_legadas$
+begin
+  if to_regclass('public.skill_versions') is null
+     or not exists (
+       select 1
+         from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'skill_versions'
+          and column_name = 'pointer_id'
+     ) then
+    return;
+  end if;
+
+  alter table public.skill_versions
+    alter column pointer_id drop not null;
+
+  alter table public.skill_versions
+    drop constraint if exists skill_versions_pointer_id_fkey;
+
+  alter table public.skill_versions
+    add constraint skill_versions_pointer_id_fkey
+    foreign key (pointer_id)
+    references public.skill_pointers(id)
+    on delete set null;
+end
+$skill_versions_legadas$;
+
+-- ---- hardening de função de gatilho legada (migration 0423) ----
+-- Alguns bancos antigos ainda têm esta função, embora ela não faça parte de
+-- um install fresco. O search_path fixo elimina a resolução influenciável pela
+-- sessão; a guarda evita falha onde ela já não existe.
+do $$
+begin
+  if to_regprocedure('public.fn_espelha_nome_e_name()') is not null then
+    alter function public.fn_espelha_nome_e_name()
+      set search_path = public, pg_temp;
+  end if;
+end $$;
+
 -- ---- módulo suspenso vira ERRO que o kit reporta (migration 0340) ----
 --
 -- Um comando SEPARADO da reaplicação, de propósito: se ela relançasse, a marca
@@ -40350,3 +40471,32 @@ create policy "tenant_isolation_document_checklist_items_all" on public.document
   with check (organization_id in (select public.fn_user_org_ids()));
 
 notify pgrst, 'reload schema';
+
+-- ---- retomada de negócio encerrado guarda a cadeia de tentativas (migration 0425) ----
+--
+-- Aditiva e idempotente: a coluna nasce null em toda linha existente, a FK é
+-- `on delete set null` (apagar um negócio solta o ponteiro da tentativa nova, em
+-- vez de recusar a exclusão ou propagá-la) e o índice é parcial — só a linha que
+-- aponta para alguém é consultada pela cadeia "tentativas até ganhar".
+alter table public.crm_leads
+  add column if not exists retomado_de_lead_id uuid;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'fk_crm_leads_retomado_de_lead'
+      and conrelid = 'public.crm_leads'::regclass
+  ) then
+    alter table public.crm_leads
+      add constraint fk_crm_leads_retomado_de_lead
+      foreign key (retomado_de_lead_id)
+      references public.crm_leads(id)
+      on delete set null;
+  end if;
+end $$;
+
+create index if not exists idx_crm_leads_retomado_de_lead
+  on public.crm_leads (retomado_de_lead_id)
+  where retomado_de_lead_id is not null;

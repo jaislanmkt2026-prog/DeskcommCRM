@@ -4668,12 +4668,14 @@ export type Database = {
           id: string
           last_activity_at: string | null
           lost_reason: string | null
+          won_reason: string | null
           organization_id: string
           owner_agent_id: string | null
           owner_kind: string | null
           owner_user_id: string | null
           pipeline_id: string
           position_in_stage: number
+          retomado_de_lead_id: string | null
           source: string
           source_metadata: Json
           stage_changed_at: string | null
@@ -4698,12 +4700,14 @@ export type Database = {
           id?: string
           last_activity_at?: string | null
           lost_reason?: string | null
+          won_reason?: string | null
           organization_id: string
           owner_agent_id?: string | null
           owner_kind?: string | null
           owner_user_id?: string | null
           pipeline_id: string
           position_in_stage?: number
+          retomado_de_lead_id?: string | null
           source?: string
           source_metadata?: Json
           stage_changed_at?: string | null
@@ -4728,12 +4732,14 @@ export type Database = {
           id?: string
           last_activity_at?: string | null
           lost_reason?: string | null
+          won_reason?: string | null
           organization_id?: string
           owner_agent_id?: string | null
           owner_kind?: string | null
           owner_user_id?: string | null
           pipeline_id?: string
           position_in_stage?: number
+          retomado_de_lead_id?: string | null
           source?: string
           source_metadata?: Json
           stage_changed_at?: string | null
