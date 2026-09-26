@@ -9,6 +9,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { citacaoDaLei, perfilDoPais } from "@/lib/legal/perfil-do-pais";
 import { logger } from "@/lib/logger";
+import { camposLegiveis, perguntasDosGrafos, type CampoLegivel } from "@/lib/lgpd/campos-personalizados";
 import { maskPhone } from "@/lib/lgpd/mask";
 import type { Json } from "@/lib/database.types";
 
@@ -34,6 +35,16 @@ export interface ContactSnapshot {
   last_activity_at: string | null;
   /** Primeiro atendimento marcado. Sobrevive à anonimização: é registro de operação. */
   first_service_at: string | null;
+  /**
+   * Campos personalizados — onde os roteiros de atendimento gravam o que o
+   * cliente respondeu (CPF inclusive). A anonimização já os zera; sem esta
+   * linha o titular pedia acesso e não recebia o que o roteiro coletou.
+   */
+  custom_fields: Record<string, unknown>;
+  /** Para o PDF: rótulo da pergunta + valor, sem o CPF (ver `campos-personalizados.ts`). */
+  campos_legiveis: CampoLegivel[];
+  /** Um roteiro guardou o CPF nos campos (texto, não a coluna cifrada). */
+  cpf_informado_na_conversa: boolean;
 }
 
 export interface ConsentRow {
@@ -92,6 +103,22 @@ export interface ActivityRow {
   type: string;
   source_module: string | null;
   performed_at: string;
+}
+
+/**
+ * O resumo que o agente guarda sobre o titular (`lead_checkpoints`).
+ *
+ * Entra porque a anonimização o REDIGE (migration 0391): o resumo corrido, os
+ * compromissos e a próxima ação são texto que o modelo escreveu SOBRE a pessoa,
+ * e o que se apaga a pedido do titular é o que se entrega a pedido dele.
+ */
+export interface CheckpointRow {
+  id: string;
+  rolling_summary: string;
+  commitments: unknown;
+  objections: unknown;
+  next_action: string | null;
+  created_at: string;
 }
 
 /**
@@ -446,6 +473,7 @@ export interface ExportPayload {
   leads: LeadRow[];
   orders: OrderRow[];
   activities: ActivityRow[];
+  checkpoints: CheckpointRow[];
   appointments: AppointmentRow[];
   sales: SaleRow[];
   tasks: TaskRow[];
@@ -652,6 +680,43 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
       });
     }
     if (data) {
+      const customFields =
+        data.custom_fields && typeof data.custom_fields === "object" && !Array.isArray(data.custom_fields)
+          ? (data.custom_fields as Record<string, unknown>)
+          : {};
+      // Os rótulos vêm das perguntas dos roteiros que o contato percorreu. Duas
+      // leituras planas (sem embed): o coletor também roda sobre clientes que
+      // só entendem coluna simples (tests/invariants/agenda-meet-export).
+      const grafos: unknown[] = [];
+      const { data: inscricoes, error: inscricoesErr } = await admin
+        .from("followup_enrollments")
+        .select("version_id")
+        .eq("organization_id", organizationId)
+        .eq("contact_id", contactId)
+        .order("started_at", { ascending: false })
+        .limit(50);
+      const versaoIds = [
+        ...new Set((inscricoes ?? []).flatMap((r) => (r.version_id ? [r.version_id as string] : []))),
+      ];
+      if (versaoIds.length > 0 && !inscricoesErr) {
+        const { data: versoes, error: versoesErr } = await admin
+          .from("followup_flow_versions")
+          .select("id, graph")
+          .eq("organization_id", organizationId)
+          .in("id", versaoIds);
+        if (versoesErr) {
+          logger.warn("[lgpd-export-worker] roteiros load failed", { request_id: requestId, error: versoesErr.message });
+        }
+        const porId = new Map((versoes ?? []).map((v) => [v.id as string, v.graph]));
+        for (const id of versaoIds) grafos.push(porId.get(id)); // o mais recente primeiro
+      }
+      if (inscricoesErr) {
+        logger.warn("[lgpd-export-worker] roteiros load failed", {
+          request_id: requestId,
+          error: inscricoesErr.message,
+        });
+      }
+      const legiveis = camposLegiveis(customFields, perguntasDosGrafos(grafos));
       contact = {
         id: data.id,
         name: data.name ?? null,
@@ -669,6 +734,9 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
         created_at: data.created_at,
         last_activity_at: data.last_activity_at ?? null,
         first_service_at: data.first_service_at ?? null,
+        custom_fields: customFields,
+        campos_legiveis: legiveis.campos,
+        cpf_informado_na_conversa: legiveis.cpfInformado,
       };
     }
   }
@@ -840,6 +908,26 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
       });
     } else if (data) {
       activities = data;
+    }
+  }
+
+  // Resumos do agente — contact_id direto em lead_checkpoints.
+  let checkpoints: CheckpointRow[] = [];
+  if (contactId) {
+    const { data, error } = await admin
+      .from("lead_checkpoints")
+      .select("id, rolling_summary, commitments, objections, next_action, created_at")
+      .eq("organization_id", organizationId)
+      .eq("contact_id", contactId)
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (error) {
+      logger.warn("[lgpd-export-worker] checkpoints load failed", {
+        request_id: requestId,
+        error: error.message,
+      });
+    } else if (data) {
+      checkpoints = data;
     }
   }
 
@@ -1367,6 +1455,7 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     leads,
     orders,
     activities,
+    checkpoints,
     appointments,
     sales,
     tasks,
@@ -1411,6 +1500,7 @@ function emptyPayload(
     leads: [],
     orders: [],
     activities: [],
+    checkpoints: [],
     appointments: [],
     sales: [],
     tasks: [],

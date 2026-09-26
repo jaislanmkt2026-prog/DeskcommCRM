@@ -5,6 +5,7 @@ import type { MeetingDeliveryContext, MeetingBookingContext } from "@/lib/agenda
 import type { ProactiveContext } from "@/lib/agenda/efeito";
 import type { ServiceOrigin } from "@/lib/atendimento/origem";
 import type { ServiceBoundary } from "@/lib/atendimento/fronteira";
+import type { ToolReceipt } from "@/lib/agent-engine/guardrails/lia-outbound-guard";
 /**
  * Shared types for `app/api/v1/<resource>/_handler.ts` core functions.
  *
@@ -81,10 +82,23 @@ export interface HandlerCtx {
   proactiveContext?: ProactiveContext;
   /** Trusted origin captured by the runtime, never request-body metadata. */
   serviceBoundary?: ServiceBoundary | null;
+  /** Provas internas de tools executadas neste turno; nunca vêm do request público. */
+  toolReceipts?: ToolReceipt[];
   /** Origem de evento derivado; não é campo de input público. */
   serviceOrigin?: ServiceOrigin;
   organization_id: string;
   actor: Actor;
+  /**
+   * Autoria "em nome de" (#1613): a PESSOA por cuja decisão o token envia.
+   *
+   * Vive no CTX, e não no input, de propósito: o mesmo input atravessa as tools
+   * MCP, que não têm escopo nenhum, e um campo gravável ali seria um envio
+   * forjado sem passar pelo gate `messages:on_behalf`. Quem preenche é
+   * `app/api/v1/messages/route.ts`, depois de validar o escopo do token e o
+   * membership do usuário; o handler recusa alto quando o input traz o campo e
+   * o ctx não — falha fechada, nunca grava por omissão.
+   */
+  onBehalfOf?: { userId: string; userName?: string | null; tokenName?: string | null };
   requestId: string;
   /**
    * Idioma de quem chamou, só quando é um usuário humano de verdade — as

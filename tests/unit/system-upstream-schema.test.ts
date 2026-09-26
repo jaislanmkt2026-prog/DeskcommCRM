@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = join(__dirname, "..", "..");
 const migration = readFileSync(
-  join(ROOT, "supabase", "migrations", "20260925200000_0416_crivo_interno_upstream.sql"),
+  join(ROOT, "supabase", "migrations", "20260926145759_0430_crivo_interno_upstream.sql"),
   "utf8",
 );
 

@@ -88,7 +88,12 @@ describe("mergeQualificacaoParcial", () => {
     const patchInvalido = {
       estagio_qualificacao: "invalido",
     };
-    expect(() => mergeQualificacaoParcial(existing, patchInvalido as any)).toThrow();
+    expect(() =>
+      mergeQualificacaoParcial(
+        existing,
+        patchInvalido as unknown as Parameters<typeof mergeQualificacaoParcial>[1],
+      ),
+    ).toThrow();
   });
 
   it("lança erro se faixa de valor for incoerente", () => {

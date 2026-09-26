@@ -42,7 +42,7 @@ describe("baseline imobiliário materializado", () => {
       "0384_property_proposals_reservations_history",
       "0383_price_lists",
       "0384_business_flow",
-      "0386_document_checklist_items",
+      "0429_document_checklist_items",
     ]) expect(manifest).toContain(`\`${nome}\``);
 
     expect(manifest).toContain("0384_business_flow` | **NÃO APLICADA / DEPRECATED / FORA DO ESCOPO.**");

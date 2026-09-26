@@ -69,10 +69,11 @@ async function main() {
         await importarRegistro(client, record);
         successCount++;
         console.log(`✓ ${record.unidade_numero} (${record.empreendimento})`);
-      } catch (err: any) {
+      } catch (err: unknown) {
         rejectCount++;
-        errors.push(`${record.unidade_numero}: ${err.message}`);
-        console.error(`✗ ${record.unidade_numero}: ${err.message}`);
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`${record.unidade_numero}: ${message}`);
+        console.error(`✗ ${record.unidade_numero}: ${message}`);
       }
     }
   } finally {

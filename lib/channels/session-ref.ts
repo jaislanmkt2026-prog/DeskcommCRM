@@ -32,7 +32,7 @@ export function resolveSessionRef(session: ChannelSessionRef): string {
     // O `phone_number_id` da WABA, como no canal oficial — mas pela coluna do
     // parceiro, porque os dois podem conviver e endereçam servidores diferentes.
     case "datafy":
-      return (session as any).datafy_phone_number_id ?? "";
+      return session.datafy_phone_number_id ?? "";
     case "waha":
       return session.waha_session_name;
     // O `accountId` que o provider devolve ao conectar a WABA. NÃO é o

@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const WebSocket = require("ws");
 const ws = new WebSocket(process.argv[2]);
 let id = 1;

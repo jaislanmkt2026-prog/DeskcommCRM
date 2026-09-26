@@ -63,7 +63,7 @@ export const TOOLS_IMOBILIARIO = declararTools([
       "Grava finalidade da compra, tipo de imóvel desejado, faixa de valor e quantidade de quartos.",
     oQueToca: "Perfil de interesse do comprador",
     risco: "atencao",
-    pacotes: ["vender"],
+    pacotes: ["organizar"],
   },
   {
     name: "crm_save_attendance_summary",
@@ -93,7 +93,7 @@ export const TOOLS_IMOBILIARIO = declararTools([
       "Consulta a lista de documentos necessários para a compra e a situação de envio de cada um.",
     oQueToca: "Documentos do comprador",
     risco: "seguro",
-    pacotes: ["vender"],
+    pacotes: ["organizar"],
   },
   {
     name: "crm_update_document_checklist_item",
@@ -103,6 +103,6 @@ export const TOOLS_IMOBILIARIO = declararTools([
       "Marca um documento exigido como recebido ou pendente e associa à mensagem enviada pelo cliente.",
     oQueToca: "Documentos do comprador",
     risco: "atencao",
-    pacotes: ["vender"],
+    pacotes: ["organizar"],
   },
 ]);

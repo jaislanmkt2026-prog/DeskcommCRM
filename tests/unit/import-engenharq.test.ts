@@ -13,6 +13,26 @@ import { join } from "path";
 const ORG_ID = "e6243f24-75e0-427c-8f7f-3654f5e75ed4";
 const STATUS_VALIDOS = ["disponivel", "reservado", "vendido", "bloqueado"];
 
+interface EngenharqRecord {
+  construtora: string;
+  empreendimento: string;
+  localizacao?: string;
+  bairro?: string;
+  cidade?: string;
+  unidade_numero: string;
+  bloco?: string;
+  andar?: number;
+  metragem?: number;
+  quartos?: number;
+  suites?: number;
+  vagas?: number;
+  tipologia?: string;
+  preco_cents: number;
+  disponibilidade: string;
+  atualizado_em?: string;
+  origem?: string;
+}
+
 describe("Importador Engenharq - Contrato", () => {
   let client: Client;
 
@@ -29,7 +49,7 @@ describe("Importador Engenharq - Contrato", () => {
   });
 
   // Helper: cria fixture temporária
-  function createFixture(records: any[]) {
+  function createFixture(records: EngenharqRecord[]) {
     const path = join(__dirname, `fixture-temp-${Date.now()}.json`);
     writeFileSync(path, JSON.stringify(records));
     return path;
@@ -406,7 +426,7 @@ describe("Importador Engenharq - Contrato", () => {
 });
 
 // Função auxiliar importada do import-engenharq-test.ts
-async function importarRegistro(client: Client, record: any) {
+async function importarRegistro(client: Client, record: EngenharqRecord) {
   if (!record.preco_cents || record.preco_cents <= 0) {
     throw new Error("Preço inválido (deve ser > 0)");
   }

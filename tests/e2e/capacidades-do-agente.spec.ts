@@ -76,14 +76,14 @@ const TOOLS_DO_SEED = [
   // "faltam 1 vaga". Com teto 25 essas mesmas 21 passam, a recusa nunca acontece
   // e o caso vira um clique que sempre dá certo — verde sem medir nada.
   //
-  // Nove reproduzem a MESMA aritmética no teto novo: 9 + 17 = 26 > 25, recusa
-  // por 1 vaga; desligar uma deixa 8 + 17 = 25, que é o teto exato e passa.
+  // Oito reproduzem a MESMA aritmética com o catálogo integrado: 8 + 18 = 26
+  // > 25, recusa por 1 vaga; desligar uma deixa 7 + 18 = 25, o teto exato.
   //
   // Os 17 são o pacote "Atender" DEPOIS da #528, e foi ela que mudou o número:
   // a crítica que o pacote contava (o envio de WhatsApp, que o motor descarta
   // em todo turno) deixou de ser oferecida, e com ela saiu uma vaga da conta.
-  // Com as oito antigas, 8 + 17 = 25 exatas — o pacote passaria a caber e o
-  // caso de recusa morreria calado, que é o desfecho que se quer evitar.
+  // O pacote integrado tem 18 capacidades marcáveis em "Atender"; manter nove
+  // no seed faria a tela dizer "faltam 2 vagas" e testaria outro cenário.
   //
   // As escolhidas ficam FORA do pacote "Atender" de propósito — se alguma
   // estivesse dentro, a união seria menor que a soma e a conta acima não valeria.
@@ -93,10 +93,6 @@ const TOOLS_DO_SEED = [
   "crm_book_appointment",
   "crm_reschedule_appointment",
   "crm_list_pipelines",
-  // A NONA: leitura pura, fora de "Atender" — que é o que a conta acima exige.
-  // Existe para a aritmética continuar estourando depois da #528; sem ela o
-  // cenário de recusa vira um clique que sempre dá certo.
-  "crm_list_knowledge_sources",
 ];
 
 /**
@@ -244,6 +240,13 @@ test.describe("Configurar o que o agente pode fazer", () => {
     // faltam, e o operador faz o que a própria tela manda.
     await page.getByTestId("switch-pacote-atender").click();
     await expect(page.getByTestId("aviso-teto")).toContainText(/faltam? 1 vaga/);
+    // O aviso nasce DENTRO do cartão clicado, não no topo do seletor: com a
+    // tela rolada até um pacote lá de baixo, o aviso do topo ficava fora da
+    // vista e o clique parecia não fazer nada.
+    await expect(
+      page.getByTestId("pacote-atender").getByTestId("aviso-teto"),
+      "a recusa precisa aparecer onde a pessoa clicou",
+    ).toBeVisible();
     await expect(
       page.getByTestId("pacote-atender"),
       "recusar significa NÃO aplicar: pacote meio-ligado seria o pior dos dois mundos",

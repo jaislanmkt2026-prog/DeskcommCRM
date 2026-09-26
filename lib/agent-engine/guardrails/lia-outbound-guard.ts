@@ -7,7 +7,11 @@ export const LIA_PRICE_FAILSAFE =
 export interface ToolReceipt {
   toolName: string;
   ok: boolean;
-  data?: any;
+  data?: {
+    price?: {
+      valor_cents?: number | null;
+    };
+  };
 }
 
 export interface OutboundGuardOptions {
@@ -150,7 +154,7 @@ export function aplicarGuardrailLiaOutbound(
   }
 
   // 3. Gate Determinístico de Preço de Imóvel
-  const { temPrecoImovel, trechosDetectados } = detectarAfirmacaoPrecoImovel(bodyRedacted);
+  const { temPrecoImovel } = detectarAfirmacaoPrecoImovel(bodyRedacted);
 
   if (!temPrecoImovel) {
     // Sem menção a preço de imóvel -> Passa direto

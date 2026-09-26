@@ -10,8 +10,8 @@ describe("crm_get_unit_price — Validação de Vigência e Status (Missão 5D)"
   function criarMockSupabase(opcoes: {
     tableExists: boolean;
     unitStatus?: string;
-    priceLists?: any[];
-    items?: any[];
+    priceLists?: Array<Record<string, unknown>>;
+    items?: Array<Record<string, unknown>>;
   }) {
     return {
       from: vi.fn((tabela: string) => {

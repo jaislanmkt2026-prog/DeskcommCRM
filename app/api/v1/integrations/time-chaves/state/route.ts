@@ -5,10 +5,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
-async function exactCount(table: string, organizationId: string, extra?: (query: any) => any): Promise<number> {
+async function exactCount(
+  table: string,
+  organizationId: string,
+  extra?: { column: string; value: string | boolean },
+): Promise<number> {
   const supabase = createAdminClient();
   let query = supabase.from(table).select("id", { count: "exact", head: true }).eq("organization_id", organizationId);
-  if (extra) query = extra(query);
+  if (extra) query = query.eq(extra.column, extra.value);
   const { count, error } = await query;
   if (error) throw error;
   return count ?? 0;
@@ -24,10 +28,10 @@ export async function GET(req: NextRequest): Promise<Response> {
       exactCount("contacts", org),
       exactCount("crm_leads", org),
       exactCount("conversations", org),
-      exactCount("conversations", org, (q) => q.eq("status", "pending")),
-      exactCount("conversations", org, (q) => q.eq("status", "ai_handling")),
+      exactCount("conversations", org, { column: "status", value: "pending" }),
+      exactCount("conversations", org, { column: "status", value: "ai_handling" }),
       exactCount("messages", org),
-      exactCount("contacts", org, (q) => q.eq("force_human", true)),
+      exactCount("contacts", org, { column: "force_human", value: true }),
     ]);
 
     return Response.json({

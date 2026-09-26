@@ -1,4 +1,4 @@
--- 0386 — document_checklist_items (Modelo Documental Imobiliário v2)
+-- 0425 — document_checklist_items (Modelo Documental Imobiliário v2)
 --
 -- Tabela leve que conecta checklist configurável (crm_pipelines.settings->'checklist_documental')
 -- aos documentos reais (messages.media_storage_path).

@@ -1,4 +1,4 @@
--- 0416 — Crivo interno: estado e histórico de detecção do upstream.
+-- 0426 — Crivo interno: estado e histórico de detecção do upstream.
 --
 -- São tabelas de INSTÂNCIA, sem organization_id. O objeto observado é o código
 -- que roda o CRM inteiro; criar uma cópia por tenant daria estados divergentes

@@ -3,17 +3,14 @@
  * organization_id vem do contexto (ctx.organizationId), nunca argumento IA.
  */
 import { z } from "zod";
-import type { McpToolDefinition } from "../types";
-import { createAdminClient } from "@/lib/supabase/admin";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { McpContext, McpToolDefinition } from "../types";
 import { mergeQualificacaoParcial, qualificacaoImobiliariaSchema } from "@/lib/schemas/imobiliario";
 import { triggerHandoff } from "@/lib/ai/handoff/orchestrator";
 import { motivoCodigoDoTexto } from "@/lib/escalacao/passagem";
 
-// Helper para extrair orgId e supabase de forma resiliente
-function getCtxResources(ctx: any) {
-  const orgId = ctx.organizationId ?? ctx.organization_id;
-  const supabase = ctx.supabase ?? createAdminClient();
-  return { orgId, supabase };
+function getCtxResources(ctx: McpContext) {
+  return { orgId: ctx.organizationId, supabase: ctx.supabase };
 }
 
 // ─── Schema Zod para crm_save_lead_preferences ──────────────────────────────
@@ -67,7 +64,7 @@ export const crmSaveLeadPreferences: McpToolDefinition = {
     "Salva preferências de qualificação imobiliária do lead (merge parcial seguro com validação Zod).",
   inputSchema: saveLeadPreferencesInput.shape,
   category: "write",
-  requiresRole: "agent",
+  requiresRole: "ai_operator",
   requiresScope: "mcp:write",
   handler: async (args, ctx) => {
     const { orgId, supabase } = getCtxResources(ctx);
@@ -249,13 +246,14 @@ const getUnitPriceInput = z.object({
  * Consulta de preço oficial de unidade com validação rigorosa de vigência e status da tabela (0383).
  */
 export async function consultarPrecoUnidadeVigente(
-  supabase: any,
+  supabase: unknown,
   orgId: string,
   unitId: string,
   dataReferencia?: string
-): Promise<{ ok: boolean; error?: string; detail?: string; price?: any; status?: string }> {
+){
+  const client = supabase as SupabaseClient;
   // 1. Valida existência da tabela no banco (migration 0383)
-  const { data: tableExists } = await supabase
+  const { data: tableExists } = await client
     .from("information_schema.tables")
     .select("table_name")
     .eq("table_schema", "public")
@@ -267,7 +265,7 @@ export async function consultarPrecoUnidadeVigente(
   }
 
   // 2. Valida unidade e tenant
-  const { data: unit, error: unitErr } = await supabase
+  const { data: unit, error: unitErr } = await client
     .from("real_estate_units")
     .select("id, status, development_id")
     .eq("id", unitId)
@@ -288,7 +286,7 @@ export async function consultarPrecoUnidadeVigente(
 
   // 3. Busca tabelas ativas e vigentes:
   // status = 'ativa' E vigencia_inicio <= hoje E (vigencia_fim IS NULL OU vigencia_fim >= hoje)
-  const { data: activeLists, error: listErr } = await supabase
+  const { data: activeLists, error: listErr } = await client
     .from("real_estate_price_lists")
     .select("id, nome, etapa, versao, vigencia_inicio, vigencia_fim, fonte, status")
     .eq("organization_id", orgId)
@@ -304,10 +302,10 @@ export async function consultarPrecoUnidadeVigente(
     return { ok: false, error: "Sem tabela de preços ativa e vigente" };
   }
 
-  const listIds = activeLists.map((l: any) => l.id);
+  const listIds = activeLists.map((l) => l.id);
 
   // 4. Localiza itens disponíveis nas tabelas vigentes
-  const { data: items, error: itemErr } = await supabase
+  const { data: items, error: itemErr } = await client
     .from("real_estate_price_list_items")
     .select("valor_cents, sinal_cents, parcelas, financiamento, condicoes_chaves, status, price_list_id")
     .eq("unit_id", unitId)
@@ -324,7 +322,7 @@ export async function consultarPrecoUnidadeVigente(
   }
 
   // 5. Trata múltiplas tabelas ativas concorrentes para a mesma unidade (fail-safe determinístico)
-  const uniqueTableIds = Array.from(new Set(items.map((i: any) => i.price_list_id)));
+  const uniqueTableIds = Array.from(new Set(items.map((i) => i.price_list_id)));
   if (uniqueTableIds.length > 1) {
     return {
       ok: false,
@@ -333,8 +331,8 @@ export async function consultarPrecoUnidadeVigente(
     };
   }
 
-  const item = items[0];
-  const priceList = activeLists.find((l: any) => l.id === item.price_list_id);
+  const item = items[0]!;
+  const priceList = activeLists.find((l) => l.id === item.price_list_id);
 
   return {
     ok: true,
@@ -388,7 +386,7 @@ export const crmSaveAttendanceSummary: McpToolDefinition = {
   description: "Grava resumo de atendimento na timeline do lead.",
   inputSchema: saveAttendanceSummaryInput.shape,
   category: "write",
-  requiresRole: "agent",
+  requiresRole: "ai_operator",
   requiresScope: "mcp:write",
   handler: async (args, ctx) => {
     const { orgId, supabase } = getCtxResources(ctx);
@@ -456,7 +454,7 @@ export const crmRequestHandoffImobiliario: McpToolDefinition = {
     "Aciona handoff bot→humano enriquecido com dados imobiliários (reusa orchestrator existente).",
   inputSchema: requestHandoffInput.shape,
   category: "write",
-  requiresRole: "agent",
+  requiresRole: "ai_operator",
   requiresScope: "mcp:write",
   handler: async (args, ctx) => {
     const { orgId, supabase } = getCtxResources(ctx);
@@ -565,7 +563,7 @@ export const crmUpdateDocumentChecklistItem: McpToolDefinition = {
   description: "Atualiza status de item de checklist e vincula message_id ao documento real.",
   inputSchema: updateDocumentChecklistItemInput.shape,
   category: "write",
-  requiresRole: "agent",
+  requiresRole: "ai_operator",
   requiresScope: "mcp:write",
   handler: async (args, ctx) => {
     const { orgId, supabase } = getCtxResources(ctx);
