@@ -95,11 +95,13 @@ LABEL org.opencontainers.image.source="https://github.com/melgarafael/DeskcommCR
 # sob `CMD ["node","server.js"]` — só existe quando o processo nasce de um
 # `npm`/`pnpm run`. Toda instalação do mundo reportava o fallback "0.1.0".
 ARG APP_VERSION=dev
+ARG APP_REVISION=
 ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     NEXT_TELEMETRY_DISABLED=1 \
-    APP_VERSION=$APP_VERSION
+    APP_VERSION=$APP_VERSION \
+    APP_REVISION=$APP_REVISION
 # ffmpeg: a derivação de vídeo (Onda 3.1) roda no processo do app — o cron
 # event-log-drain executa o media_derive handler, que chama `ffmpeg` via spawn
 # pra extrair áudio+frames. Sem o binário, todo vídeo recebido falha a derivação.

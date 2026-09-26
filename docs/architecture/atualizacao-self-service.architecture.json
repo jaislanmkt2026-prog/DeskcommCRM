@@ -125,7 +125,7 @@
       "col": 1,
       "type": "service",
       "label": "GitHub API pública",
-      "sublabel": "default branch · commits paginados · Git Trees completas · tag/release"
+      "sublabel": "upstream HEAD + ref JS Imóveis resolvida para SHA · merge-base · árvores completas"
     },
     {
       "id": "upstreamstate",
@@ -133,7 +133,7 @@
       "col": 2,
       "type": "database",
       "label": "system_upstream_state + checks",
-      "sublabel": "instância · sem organization_id · RLS deny-all · histórico 90d"
+      "sublabel": "instância · analysis_summary guarda ref/SHA usados · RLS deny-all · histórico 90d"
     },
     {
       "id": "updatecenter",
@@ -141,7 +141,7 @@
       "col": 2,
       "type": "frontend",
       "label": "Central de Atualizações",
-      "sublabel": "HEADs · delta/paridade · risco · conflitos · histórico · recheck"
+      "sublabel": "HEAD upstream · referência e SHA JS Imóveis · delta/paridade · risco · conflitos"
     }
   ],
   "edges": [

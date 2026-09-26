@@ -15,8 +15,15 @@ export const CRIVO_REPOSITORY = {
   upstream: "melgarafael/DeskcommCRM",
   fork: "jaislanmkt2026-prog/DeskcommCRM",
   forkOwner: "jaislanmkt2026-prog",
-  forkBranch: "imobiliario/missao-7-ui",
 } as const;
+
+type AmbienteCrivo = Record<string, string | undefined>;
+export type FonteReferenciaFork = "APP_REVISION" | "CRIVO_FORK_REF";
+
+export interface ReferenciaFork {
+  reference: string;
+  source: FonteReferenciaFork;
+}
 
 export type NivelRisco = "low" | "medium" | "high" | "critical";
 export type StatusAnalise = "never" | "no_change" | "completed" | "incomplete" | "failed";
@@ -50,8 +57,10 @@ export interface ConflitoDelta {
 }
 
 export interface ResumoAnaliseUpstream {
+  fork_reference: string;
+  fork_reference_source: FonteReferenciaFork;
+  fork_commit: string;
   merge_base_commit: string;
-  local_commit: string;
   upstream_commit: string;
   total_commits_delta: number;
   total_commits_analyzed: number;
@@ -68,7 +77,9 @@ export interface ResumoAnaliseUpstream {
 export interface DescobertaUpstream {
   repository: string;
   defaultBranch: string;
-  localCommit: string;
+  forkReference: string;
+  forkReferenceSource: FonteReferenciaFork;
+  forkCommit: string;
   upstreamCommit: string;
   mergeBaseCommit: string;
   latestTag: string;
@@ -77,12 +88,25 @@ export interface DescobertaUpstream {
 }
 
 export function snapshotMudou(
-  previous: Pick<EstadoAnterior, "local_commit" | "latest_upstream_commit" | "last_seen_tag" | "last_seen_release" | "analysis_status">,
+  previous: Pick<
+    EstadoAnterior,
+    | "local_commit"
+    | "latest_upstream_commit"
+    | "last_seen_tag"
+    | "last_seen_release"
+    | "analysis_status"
+    | "analysis_summary"
+  >,
   current: DescobertaUpstream,
 ): boolean {
+  const summary =
+    previous.analysis_summary && typeof previous.analysis_summary === "object"
+      ? (previous.analysis_summary as Record<string, unknown>)
+      : null;
   return !(
     previous.latest_upstream_commit === current.upstreamCommit &&
-    previous.local_commit === current.localCommit &&
+    previous.local_commit === current.forkCommit &&
+    summary?.fork_reference === current.forkReference &&
     previous.last_seen_tag === current.latestTag &&
     previous.last_seen_release === current.latestRelease &&
     previous.analysis_status === "completed"
@@ -133,12 +157,68 @@ interface GitHubTree {
 
 export class CrivoUpstreamError extends Error {
   constructor(
-    public readonly code: "upstream_unavailable" | "analysis_incomplete" | "invalid_upstream",
+    public readonly code:
+      | "upstream_unavailable"
+      | "analysis_incomplete"
+      | "invalid_upstream"
+      | "invalid_fork_reference",
     message: string,
   ) {
     super(message);
     this.name = "CrivoUpstreamError";
   }
+}
+
+const SHA_COMPLETO = /^[0-9a-f]{40}$/i;
+const REF_GIT_CONTROLADA = /^[A-Za-z0-9._/-]{1,200}$/;
+
+function referenciaGitValida(value: string): boolean {
+  return (
+    REF_GIT_CONTROLADA.test(value) &&
+    !value.startsWith("/") &&
+    !value.endsWith("/") &&
+    !value.endsWith(".") &&
+    !value.includes("..") &&
+    !value.includes("//") &&
+    !value.includes("@{") &&
+    !value.split("/").some((parte) => parte.startsWith(".") || parte.endsWith(".lock"))
+  );
+}
+
+/**
+ * Referência oficial do fork JS Imóveis.
+ *
+ * Em imagem publicada, `APP_REVISION` é o SHA exato gravado pelo CI e vence:
+ * ele representa o código que está rodando. Fora desse caminho (desenvolvimento
+ * ou instalação legada), `CRIVO_FORK_REF` precisa ser informado explicitamente.
+ * Não existe fallback para uma branch histórica.
+ */
+export function resolverReferenciaFork(env: AmbienteCrivo = process.env): ReferenciaFork {
+  const revision = env.APP_REVISION?.trim();
+  if (revision) {
+    if (!SHA_COMPLETO.test(revision)) {
+      throw new CrivoUpstreamError(
+        "invalid_fork_reference",
+        "APP_REVISION não contém um SHA Git completo válido.",
+      );
+    }
+    return { reference: revision.toLowerCase(), source: "APP_REVISION" };
+  }
+
+  const configured = env.CRIVO_FORK_REF?.trim();
+  if (!configured) {
+    throw new CrivoUpstreamError(
+      "invalid_fork_reference",
+      "Referência oficial do fork ausente. Configure APP_REVISION ou CRIVO_FORK_REF.",
+    );
+  }
+  if (!SHA_COMPLETO.test(configured) && !referenciaGitValida(configured)) {
+    throw new CrivoUpstreamError(
+      "invalid_fork_reference",
+      "CRIVO_FORK_REF possui formato Git inválido.",
+    );
+  }
+  return { reference: configured, source: "CRIVO_FORK_REF" };
 }
 
 function sanitizarErro(error: unknown): string {
@@ -202,14 +282,30 @@ function endpointCompare(base: string, head: string): string {
   return `/repos/${CRIVO_REPOSITORY.upstream}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
 }
 
-export async function descobrirUpstream(fetchImpl: typeof fetch = fetch): Promise<DescobertaUpstream> {
-  const repo = await githubJson<GitHubRepo>(`/repos/${CRIVO_REPOSITORY.upstream}`, fetchImpl);
+export async function descobrirUpstream(
+  fetchImpl: typeof fetch = fetch,
+  env: AmbienteCrivo = process.env,
+): Promise<DescobertaUpstream> {
+  const referenciaFork = resolverReferenciaFork(env);
+  const [repo, forkHead] = await Promise.all([
+    githubJson<GitHubRepo>(`/repos/${CRIVO_REPOSITORY.upstream}`, fetchImpl),
+    githubJson<GitHubCommit>(
+      `/repos/${CRIVO_REPOSITORY.fork}/commits/${encodeURIComponent(referenciaFork.reference)}`,
+      fetchImpl,
+    ),
+  ]);
   const defaultBranch = repo?.default_branch?.trim();
   if (!defaultBranch || !/^[A-Za-z0-9._/-]{1,200}$/.test(defaultBranch) || defaultBranch.includes("..")) {
     throw new CrivoUpstreamError("invalid_upstream", "Branch default do upstream é inválida.");
   }
+  if (!forkHead?.sha || !SHA_COMPLETO.test(forkHead.sha)) {
+    throw new CrivoUpstreamError(
+      "invalid_fork_reference",
+      "A referência oficial do fork não resolveu para um commit Git válido.",
+    );
+  }
 
-  const forkRef = `${CRIVO_REPOSITORY.forkOwner}:${CRIVO_REPOSITORY.forkBranch}`;
+  const forkRef = `${CRIVO_REPOSITORY.forkOwner}:${forkHead.sha}`;
   const [head, cross, tags, release] = await Promise.all([
     githubJson<GitHubCommit>(
       `/repos/${CRIVO_REPOSITORY.upstream}/commits/${encodeURIComponent(defaultBranch)}`,
@@ -223,11 +319,19 @@ export async function descobrirUpstream(fetchImpl: typeof fetch = fetch): Promis
   if (!head?.sha || !cross?.base_commit?.sha || !cross.merge_base_commit?.sha) {
     throw new CrivoUpstreamError("upstream_unavailable", "GitHub devolveu comparação incompleta.");
   }
+  if (cross.base_commit.sha !== forkHead.sha) {
+    throw new CrivoUpstreamError(
+      "invalid_fork_reference",
+      "A comparação do GitHub não usou o commit resolvido da referência oficial do fork.",
+    );
+  }
 
   return {
     repository: CRIVO_REPOSITORY.upstream,
     defaultBranch,
-    localCommit: cross.base_commit.sha,
+    forkReference: referenciaFork.reference,
+    forkReferenceSource: referenciaFork.source,
+    forkCommit: forkHead.sha,
     upstreamCommit: head.sha,
     mergeBaseCommit: cross.merge_base_commit.sha,
     latestTag: tags?.[0]?.name ?? "",
@@ -437,8 +541,10 @@ export function montarResumoAnalise(input: {
   const totalFiles = counts.added + counts.modified + counts.deleted + counts.renamed;
 
   return {
+    fork_reference: input.descoberta.forkReference,
+    fork_reference_source: input.descoberta.forkReferenceSource,
+    fork_commit: input.descoberta.forkCommit,
     merge_base_commit: input.descoberta.mergeBaseCommit,
-    local_commit: input.descoberta.localCommit,
     upstream_commit: input.descoberta.upstreamCommit,
     total_commits_delta: input.commitsTotal,
     total_commits_analyzed: input.commitsAnalyzed,
@@ -468,7 +574,7 @@ export async function analisarUpstream(
   const [baseTree, upstreamTree, forkTree] = await Promise.all([
     arvoreDoCommit(CRIVO_REPOSITORY.upstream, descoberta.mergeBaseCommit, fetchImpl),
     arvoreDoCommit(CRIVO_REPOSITORY.upstream, descoberta.upstreamCommit, fetchImpl),
-    arvoreDoCommit(CRIVO_REPOSITORY.fork, descoberta.localCommit, fetchImpl),
+    arvoreDoCommit(CRIVO_REPOSITORY.fork, descoberta.forkCommit, fetchImpl),
   ]);
   const summary = montarResumoAnalise({
     descoberta,
@@ -482,6 +588,9 @@ export async function analisarUpstream(
 
 function resumoCompacto(summary: ResumoAnaliseUpstream): Record<string, unknown> {
   return {
+    fork_reference: summary.fork_reference,
+    fork_reference_source: summary.fork_reference_source,
+    fork_commit: summary.fork_commit,
     parity: summary.parity,
     counts: summary.counts,
     categories: summary.categories,
@@ -494,6 +603,7 @@ export async function executarCrivoUpstream(options?: {
   fetchImpl?: typeof fetch;
   now?: Date;
   db?: AdminClient;
+  env?: AmbienteCrivo;
 }): Promise<{ result: "no_change" | "update_available" | "failed"; analysis_status: StatusAnalise; error?: string }> {
   const db = options?.db ?? (await import("@/lib/supabase/admin")).createAdminClient();
   const fetchImpl = options?.fetchImpl ?? fetch;
@@ -525,7 +635,7 @@ export async function executarCrivoUpstream(options?: {
   const previousState = (previous ?? {}) as EstadoAnterior;
   let descobertaAtual: DescobertaUpstream | null = null;
   try {
-    const descoberta = await descobrirUpstream(fetchImpl);
+    const descoberta = await descobrirUpstream(fetchImpl, options?.env ?? process.env);
     descobertaAtual = descoberta;
     const sameSnapshot = !snapshotMudou(previousState, descoberta);
 
@@ -537,7 +647,7 @@ export async function executarCrivoUpstream(options?: {
           id: 1,
           repository: descoberta.repository,
           default_branch: descoberta.defaultBranch,
-          local_commit: descoberta.localCommit,
+          local_commit: descoberta.forkCommit,
           latest_upstream_commit: descoberta.upstreamCommit,
           last_checked_at: now.toISOString(),
           next_check_at: next.toISOString(),
@@ -550,7 +660,7 @@ export async function executarCrivoUpstream(options?: {
         .update({
           finished_at: now.toISOString(),
           default_branch: descoberta.defaultBranch,
-          local_commit: descoberta.localCommit,
+          local_commit: descoberta.forkCommit,
           upstream_commit: descoberta.upstreamCommit,
           result: "no_change",
           analysis_status: "no_change",
@@ -574,7 +684,7 @@ export async function executarCrivoUpstream(options?: {
       id: 1,
       repository: descoberta.repository,
       default_branch: descoberta.defaultBranch,
-      local_commit: descoberta.localCommit,
+      local_commit: descoberta.forkCommit,
       last_seen_commit: complete ? descoberta.upstreamCommit : (previousState.last_seen_commit ?? ""),
       latest_upstream_commit: descoberta.upstreamCommit,
       last_seen_tag: complete ? descoberta.latestTag : (previousState.last_seen_tag ?? ""),
@@ -594,7 +704,7 @@ export async function executarCrivoUpstream(options?: {
       .update({
         finished_at: now.toISOString(),
         default_branch: descoberta.defaultBranch,
-        local_commit: descoberta.localCommit,
+        local_commit: descoberta.forkCommit,
         upstream_commit: descoberta.upstreamCommit,
         result,
         commits_delta: analysis.summary.total_commits_delta,
@@ -619,7 +729,7 @@ export async function executarCrivoUpstream(options?: {
       ...(descobertaAtual
         ? {
             default_branch: descobertaAtual.defaultBranch,
-            local_commit: descobertaAtual.localCommit,
+            local_commit: descobertaAtual.forkCommit,
             latest_upstream_commit: descobertaAtual.upstreamCommit,
             update_available: descobertaAtual.commitsBehind > 0,
             commits_behind: descobertaAtual.commitsBehind,

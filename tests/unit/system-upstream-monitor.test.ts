@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  CRIVO_REPOSITORY,
   classificarArquivos,
   compararArvores,
   detectarConflitos,
   descobrirUpstream,
   montarResumoAnalise,
+  resolverReferenciaFork,
   snapshotMudou,
   statusDaAnalise,
   type DescobertaUpstream,
@@ -15,7 +17,9 @@ import {
 const descoberta: DescobertaUpstream = {
   repository: "melgarafael/DeskcommCRM",
   defaultBranch: "main",
-  localCommit: "local",
+  forkReference: "release/js-imoveis",
+  forkReferenceSource: "CRIVO_FORK_REF",
+  forkCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   upstreamCommit: "upstream",
   mergeBaseCommit: "base",
   latestTag: "v1.50.0",
@@ -80,11 +84,12 @@ describe("Crivo interno — delta completo", () => {
 
 describe("Crivo interno — descoberta pública", () => {
   const anterior = {
-    local_commit: descoberta.localCommit,
+    local_commit: descoberta.forkCommit,
     latest_upstream_commit: descoberta.upstreamCommit,
     last_seen_tag: descoberta.latestTag,
     last_seen_release: descoberta.latestRelease,
     analysis_status: "completed",
+    analysis_summary: { fork_reference: descoberta.forkReference },
   };
 
   it("HEAD novo força análise", () => {
@@ -103,11 +108,82 @@ describe("Crivo interno — descoberta pública", () => {
     expect(snapshotMudou(anterior, descoberta)).toBe(false);
   });
 
+  it("troca da referência oficial força nova análise mesmo quando aponta para o mesmo SHA", () => {
+    expect(snapshotMudou(anterior, { ...descoberta, forkReference: "release/js-imoveis-2" })).toBe(true);
+  });
+
+  it("não contém a branch histórica como regra estrutural", () => {
+    expect(CRIVO_REPOSITORY).not.toHaveProperty("forkBranch");
+  });
+
+  it("APP_REVISION é a referência canônica da imagem quando contém SHA completo", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    expect(resolverReferenciaFork({ APP_REVISION: sha, CRIVO_FORK_REF: "release/outra" })).toEqual({
+      reference: sha,
+      source: "APP_REVISION",
+    });
+  });
+
+  it("referência ausente ou inválida falha fechado", () => {
+    expect(() => resolverReferenciaFork({})).toThrowError(/Referência oficial do fork ausente/);
+    expect(() => resolverReferenciaFork({ CRIVO_FORK_REF: "../../ref ruim" })).toThrowError(
+      /formato Git inválido/,
+    );
+    expect(() => resolverReferenciaFork({ APP_REVISION: "abc" })).toThrowError(/SHA Git completo/);
+  });
+
+  it("sem referência oficial a descoberta termina antes da rede e nunca produz análise completa", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    await expect(descobrirUpstream(fetchImpl, {})).rejects.toMatchObject({
+      code: "invalid_fork_reference",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("a referência configurada é resolvida para o SHA usado na comparação", async () => {
+    const shaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const shaB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const upstream = "cccccccccccccccccccccccccccccccccccccccc";
+    const mergeBase = "dddddddddddddddddddddddddddddddddddddddd";
+    const comparisons: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+      if (url.endsWith("/repos/melgarafael/DeskcommCRM")) return json({ default_branch: "main" });
+      if (url.includes("/repos/jaislanmkt2026-prog/DeskcommCRM/commits/release%2Fa")) return json({ sha: shaA });
+      if (url.includes("/repos/jaislanmkt2026-prog/DeskcommCRM/commits/release%2Fb")) return json({ sha: shaB });
+      if (url.endsWith("/repos/melgarafael/DeskcommCRM/commits/main")) return json({ sha: upstream });
+      if (url.includes("/compare/")) {
+        comparisons.push(url);
+        const base = url.includes(shaA) ? shaA : shaB;
+        return json({
+          ahead_by: 2,
+          behind_by: 0,
+          total_commits: 2,
+          base_commit: { sha: base },
+          merge_base_commit: { sha: mergeBase },
+          commits: [],
+        });
+      }
+      if (url.includes("/tags?")) return json([{ name: "v1.50.0" }]);
+      if (url.endsWith("/releases/latest")) return json({ tag_name: "v1.50.0" });
+      throw new Error(`URL inesperada: ${url}`);
+    };
+
+    const a = await descobrirUpstream(fetchImpl, { CRIVO_FORK_REF: "release/a" });
+    const b = await descobrirUpstream(fetchImpl, { CRIVO_FORK_REF: "release/b" });
+    expect(a.forkCommit).toBe(shaA);
+    expect(b.forkCommit).toBe(shaB);
+    expect(comparisons).toHaveLength(2);
+    expect(comparisons[0]).toContain(shaA);
+    expect(comparisons[1]).toContain(shaB);
+  });
+
   it("upstream indisponível falha fechado e não inventa estado atualizado", async () => {
     const brokenFetch: typeof fetch = async () => {
       throw new Error("network down");
     };
-    await expect(descobrirUpstream(brokenFetch)).rejects.toMatchObject({
+    await expect(descobrirUpstream(brokenFetch, { CRIVO_FORK_REF: "release/js-imoveis" })).rejects.toMatchObject({
       code: "upstream_unavailable",
     });
   });

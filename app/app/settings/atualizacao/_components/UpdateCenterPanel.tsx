@@ -10,6 +10,9 @@ type Risk = "low" | "medium" | "high" | "critical";
 type AnalysisStatus = "never" | "no_change" | "completed" | "incomplete" | "failed";
 
 interface AnalysisSummary {
+  fork_reference?: string;
+  fork_reference_source?: "APP_REVISION" | "CRIVO_FORK_REF";
+  fork_commit?: string;
   total_commits_delta?: number;
   total_commits_analyzed?: number;
   total_files_delta?: number;
@@ -109,7 +112,10 @@ export function UpdateCenterPanel() {
   const state = query.data?.state ?? null;
   const summary = state?.analysis_summary ?? {};
   const counts = summary.counts ?? {};
-  const parityOk = summary.parity?.commits === true && summary.parity?.files === true;
+  const analysisComplete =
+    state?.analysis_status === "completed" &&
+    summary.parity?.commits === true &&
+    summary.parity?.files === true;
 
   return (
     <section className="mx-auto mb-8 w-full max-w-5xl" aria-labelledby="central-updates-title">
@@ -151,7 +157,18 @@ export function UpdateCenterPanel() {
                 <Stat label="Upstream" value={state?.repository ?? "melgarafael/DeskcommCRM"} />
                 <Stat label="Branch" value={state?.default_branch || "—"} />
                 <Stat label="HEAD upstream" value={shortSha(state?.latest_upstream_commit)} />
-                <Stat label="Nosso HEAD" value={shortSha(state?.local_commit)} />
+                <Stat
+                  label="Referência JS Imóveis"
+                  value={state?.analysis_status === "completed" ? summary.fork_reference || "—" : "—"}
+                />
+                <Stat
+                  label="SHA JS Imóveis"
+                  value={
+                    state?.analysis_status === "completed"
+                      ? shortSha(summary.fork_commit || state?.local_commit)
+                      : "—"
+                  }
+                />
                 <Stat label="Última verificação" value={when(state?.last_checked_at)} />
                 <Stat label="Próxima verificação" value={when(state?.next_check_at)} />
                 <Stat label="Tag" value={state?.last_seen_tag || "—"} />
@@ -179,7 +196,11 @@ export function UpdateCenterPanel() {
                   {summary.total_files_analyzed ?? 0}/{summary.total_files_delta ?? 0}
                 </p>
                 <p className="mt-1 font-medium">
-                  {parityOk ? "ANÁLISE COMPLETA" : state?.analysis_status === "never" ? "AINDA NÃO MEDIDA" : "ANALYSIS_INCOMPLETE"}
+                  {analysisComplete
+                    ? "ANÁLISE COMPLETA"
+                    : state?.analysis_status === "never"
+                      ? "AINDA NÃO MEDIDA"
+                      : "ANALYSIS_INCOMPLETE"}
                 </p>
               </div>
 

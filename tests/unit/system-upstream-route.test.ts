@@ -1,7 +1,9 @@
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadAuthUser } from "@/lib/auth/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { executarCrivoUpstream } from "@/lib/system/upstream-monitor";
 
 vi.mock("@/lib/auth/server", () => ({ loadAuthUser: vi.fn() }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: vi.fn() }));
@@ -18,5 +20,19 @@ describe("/api/v1/system/upstream", () => {
     const response = await GET();
     expect(response.status).toBe(403);
     expect(createAdminClient).not.toHaveBeenCalled();
+  });
+
+  it.each(["merge", "apply", "update"])("não aceita ação destrutiva %s", async (action) => {
+    vi.mocked(loadAuthUser).mockResolvedValue({ id: "owner", is_platform_admin: true } as never);
+    const { POST } = await import("@/app/api/v1/system/upstream/route");
+    const response = await POST(
+      new NextRequest("http://localhost/api/v1/system/upstream", {
+        method: "POST",
+        body: JSON.stringify({ action }),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(executarCrivoUpstream).not.toHaveBeenCalled();
   });
 });
