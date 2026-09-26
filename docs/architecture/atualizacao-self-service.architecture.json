@@ -23,6 +23,10 @@
     {
       "id": "humano",
       "label": "O que o dono vê"
+    },
+    {
+      "id": "externo",
+      "label": "Upstream público"
     }
   ],
   "mainPath": [
@@ -106,6 +110,38 @@
       "type": "frontend",
       "label": "/app/settings/atualizacao",
       "sublabel": "4 estados · avisos de TODAS as versões da faixa, antes do botão"
+    },
+    {
+      "id": "crivocron",
+      "lane": "app",
+      "col": 1,
+      "type": "api",
+      "label": "GET /api/v1/cron/upstream-check",
+      "sublabel": "autorizaCron · scheduler a cada 6h · somente detectar/analisar"
+    },
+    {
+      "id": "githubupstream",
+      "lane": "externo",
+      "col": 1,
+      "type": "service",
+      "label": "GitHub API pública",
+      "sublabel": "default branch · commits paginados · Git Trees completas · tag/release"
+    },
+    {
+      "id": "upstreamstate",
+      "lane": "banco",
+      "col": 2,
+      "type": "database",
+      "label": "system_upstream_state + checks",
+      "sublabel": "instância · sem organization_id · RLS deny-all · histórico 90d"
+    },
+    {
+      "id": "updatecenter",
+      "lane": "humano",
+      "col": 2,
+      "type": "frontend",
+      "label": "Central de Atualizações",
+      "sublabel": "HEADs · delta/paridade · risco · conflitos · histórico · recheck"
     }
   ],
   "edges": [
@@ -182,6 +218,30 @@
       "from": "runs",
       "to": "painel",
       "label": "polling 5s — progresso e desfecho"
+    },
+    {
+      "id": "e13",
+      "from": "crivocron",
+      "to": "githubupstream",
+      "label": "consulta read-only com timeout/retry limitado"
+    },
+    {
+      "id": "e14",
+      "from": "githubupstream",
+      "to": "upstreamstate",
+      "label": "HEAD/tag/release + delta completo e paridade"
+    },
+    {
+      "id": "e15",
+      "from": "upstreamstate",
+      "to": "updatecenter",
+      "label": "estado atual + últimas 20 verificações"
+    },
+    {
+      "id": "e16",
+      "from": "updatecenter",
+      "to": "crivocron",
+      "label": "nova verificação usa o mesmo executor do cron"
     }
   ],
   "cards": [

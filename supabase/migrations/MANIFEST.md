@@ -414,4 +414,6 @@ To re-apply on a fresh Supabase project, replay the migrations in version order 
 
 ### Estado explícito fora da cadeia aplicada — Missão 6.1
 
+| `20260925200000` | `0416_crivo_interno_upstream` | **Crivo interno read-only do upstream.** Cria `system_upstream_state` (singleton) e `system_upstream_checks` (histórico) como objetos de INSTÂNCIA, sem `organization_id`, com RLS deny-all para `anon`/`authenticated` e acesso apenas por `service_role` atrás dos guards do sistema. Guarda HEAD local/upstream, branch real, tag/release, delta, risco, paridade e histórico sanitizado. Retenção de 90 dias é executada pelo próprio Crivo; nenhuma migration upstream é aplicada e nenhum merge nasce desta estrutura. |
+
 - `20260925010000_0385_lia_qualification.sql` — **NÃO APLICADA / VETADA.** Permanece fora do baseline e não deve ser executada; a cópia histórica em `_legacy/` não transforma a migration em parte da cadeia aplicada.

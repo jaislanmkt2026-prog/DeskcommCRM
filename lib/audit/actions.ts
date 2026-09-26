@@ -365,6 +365,7 @@ export const AUDIT_ACTIONS = [
   "pipeline.deleted",
   "system.update_requested",
   "system.update_finished",
+  "system.upstream_check_requested",
   // IA 360 · wave 2 — o retorno agendado deixou de ser exclusividade do motor e
   // virou capacidade configurável. `followup_enrollment.*` é o motor de FLUXOS;
   // estas duas são a PROMESSA avulsa (cron_jobs), que é outra coisa e precisava
