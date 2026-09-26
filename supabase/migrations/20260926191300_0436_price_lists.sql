@@ -1,4 +1,4 @@
--- 0383 — tabelas de preço imobiliário
+-- 0436 — tabelas de preço imobiliário
 --
 -- Suporte a tabelas de preço oficiais de construtoras com versionamento,
 -- vigência e compatibilidade com importador Engenharq.
@@ -103,7 +103,7 @@ create policy "tenant_isolation_real_estate_price_list_items_all" on public.real
   with check (organization_id in (select public.fn_user_org_ids()));
 
 -- ─── 4. FK idempotente: property_proposals.price_list_id → real_estate_price_lists ──
--- Adicionada aqui porque property_proposals é criada em 0383_property_proposals_reservations
+-- Adicionada aqui porque property_proposals é criada em 0434_property_proposals_reservations
 -- (timestamp anterior), mas a tabela real_estate_price_lists só existe após esta migration.
 DO $$
 BEGIN
@@ -111,13 +111,15 @@ BEGIN
     SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'public' AND table_name = 'property_proposals'
   ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.table_constraints
-    WHERE constraint_schema = 'public'
-      AND constraint_name = 'property_proposals_price_list_id_fkey'
-      AND table_name = 'property_proposals'
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'property_proposals'
+      AND c.conname = 'property_proposals_price_list_id_fkey'
   ) THEN
-    ALTER TABLE public.property_proposals
-      ADD CONSTRAINT property_proposals_price_list_id_fkey
+    alter table public.property_proposals`r`n      add constraint property_proposals_price_list_id_fkey
       FOREIGN KEY (price_list_id) REFERENCES public.real_estate_price_lists(id)
       ON DELETE SET NULL;
   END IF;

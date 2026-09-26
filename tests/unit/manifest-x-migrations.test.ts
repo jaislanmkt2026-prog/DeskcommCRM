@@ -86,19 +86,7 @@ const TIMESTAMPS_REPETIDOS_CONHECIDOS: readonly string[] = [];
  * completos. A exceção é pelo CONJUNTO EXATO: arquivo novo com o mesmo NNNN
  * continua reprovando.
  */
-const NUMEROS_REPETIDOS_MATERIALIZADOS: Readonly<Record<string, readonly string[]>> = {
-  "0382": ["0382_fundacao_imobiliaria", "0382_link_salvo_no_modelo"],
-  "0383": [
-    "0383_pedidos_de_cadastro",
-    "0383_price_lists",
-    "0383_property_proposals_reservations",
-  ],
-  "0384": [
-    "0384_banco_externo_vira_modulo_opcional",
-    "0384_business_flow",
-    "0384_property_proposals_reservations_history",
-  ],
-};
+const NUMEROS_REPETIDOS_MATERIALIZADOS: Readonly<Record<string, readonly string[]>> = {};
 
 /** Só os arquivos que carregam timestamp no nome — as legadas não têm. */
 function arquivosComTimestamp(): { timestamp: string; arquivo: string }[] {

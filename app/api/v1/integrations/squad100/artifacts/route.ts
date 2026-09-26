@@ -2,6 +2,7 @@ import { type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { authorizeIntegration, deterministicAuditId } from "@/lib/integrations/external-auth";
+import { requireSupportWrite } from "@/lib/impersonate/support";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,8 @@ const schema = z
 export async function POST(req: NextRequest): Promise<Response> {
   const auth = await authorizeIntegration(req, "integration:squad100:write");
   if (!auth.ok) return Response.json({ ok: false, error: auth.error }, { status: auth.status });
+  const supportDenied = await requireSupportWrite(auth.organizationId);
+  if (supportDenied) return supportDenied;
   let input: z.infer<typeof schema>;
   try {
     input = schema.parse(await req.json());

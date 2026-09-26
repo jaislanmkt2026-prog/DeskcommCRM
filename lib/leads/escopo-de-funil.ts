@@ -153,6 +153,10 @@ export const ALVO_DE_FUNIL: Record<string, AlvoDeFunil> = {
   crm_create_webhook_source: "sem_funil",
   crm_set_webhook_source_active: "sem_funil",
   crm_set_automation_rule_active: "sem_funil",
+  crm_save_lead_preferences: "funil_vem_do_lead",
+  crm_save_attendance_summary: "funil_vem_do_lead",
+  crm_request_handoff_imobiliario: "sem_funil",
+  crm_update_document_checklist_item: "sem_funil",
 };
 
 /**

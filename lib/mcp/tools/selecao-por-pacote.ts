@@ -21,7 +21,7 @@ import { entraPorPacote, type ToolBundle, type ToolRisk } from "./pacotes";
  * exista em UM lugar — o mesmo teto que a tela mostra é o que o servidor
  * recusa.
  *
- * ═══ Por que 25, e não mais os 20 de antes ══════════════════════════════════
+ * ═══ Por que 30, depois de 25 ═══════════════════════════════════════════════
  *
  * O dono do produto abriu "O que o agente pode fazer" na v1.7.0 e leu
  * "20 de 20 capacidades ligadas. Limite atingido." As capacidades de agenda
@@ -43,17 +43,17 @@ import { entraPorPacote, type ToolBundle, type ToolRisk } from "./pacotes";
  *    default de hoje NENHUM segundo pacote cabia: evoluir exigia 21, reter 22,
  *    escalar 28, atender 30, organizar 32.
  *
- * 25 é o MENOR passo que resolve: dá a um agente cheio as 5 vagas da família de
- * agenda e mantém `vender` inteiro com folga real. Não é número redondo
- * escolhido no olho — subir mais seria apostar contra um argumento que continua
- * de pé só porque ninguém o mediu.
+ * Após a integração do catálogo, 30 é o MENOR passo que restaura a propriedade:
+ * `vender` sozinho exige 27 e, a partir do agente padrão, `evoluir` exige 30.
+ * A cerca `pacote-reserva-vaga-da-critica` deriva esses números do catálogo e
+ * reprova automaticamente se ele crescer de novo.
  *
  * ⚠️ O QUE FALTA, e é honesto dizer: não há instrumento para observar a
  * degradação que a heurística prevê. O lugar de observá-la é
  * `app/api/v1/ai/agents/[id]/tool-usage` e o log de invocação do run, com
  * "ferramenta errada escolhida" como sinal. Quem for subir de novo mede antes.
  */
-export const TETO_TOOLS_POR_AGENTE = 25;
+export const TETO_TOOLS_POR_AGENTE = 30;
 
 /** O mínimo que a regra precisa saber de uma capacidade. */
 export interface CapacidadeSelecionavel {

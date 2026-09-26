@@ -154,7 +154,7 @@ export function UpdateCenterPanel() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat label="Upstream" value={state?.repository ?? "melgarafael/DeskcommCRM"} />
+                <Stat label="Upstream" value={state?.repository ?? "—"} />
                 <Stat label="Branch" value={state?.default_branch || "—"} />
                 <Stat label="HEAD upstream" value={shortSha(state?.latest_upstream_commit)} />
                 <Stat

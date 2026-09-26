@@ -49,6 +49,7 @@ const INICIO_DO_APENDICE = BASELINE.search(/^-- ---- .* \(migration \d+\) ----/m
 function semComentarios(sql: string): string {
   return (
     sql
+      .replace(/\r\n?/g, "\n")
       .split("\n")
       .map((l) => l.replace(/--.*$/, ""))
       .join(" ")

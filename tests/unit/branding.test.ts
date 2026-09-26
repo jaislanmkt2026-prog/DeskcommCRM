@@ -245,7 +245,18 @@ const MARCA_CONGELADA: Record<string, EntradaDeMarca> = {
       "X-Client-Id enviado ao processo WaCalls (spec 18) — identifica o worker como o operador dono da conexão SSE nos logs e na lógica de exclusividade de chamada dele. Não é texto de interface e nunca chega ao usuário",
     marcas: ["deskcomm-worker"],
   },
-  "lib/nuvemshop/config.ts": {
+  "app/api/v1/integrations/time-chaves/state/route.ts": {
+    categoria: "PROTOCOLO",
+    motivo:
+      "campo source do contrato Time Chaves: identifica a origem técnica do snapshot para consumidores já integrados; não é marca de interface",
+    marcas: ["deskcommcrm"],
+  },
+  "lib/system/upstream-monitor.ts": {
+    categoria: "PROTOCOLO",
+    motivo:
+      "nomes fixos dos repositórios Git e User-Agent do Crivo interno; identificam os endpoints/protocolo monitorados e não a marca exibida ao usuário",
+    marcas: ["deskcommcrm", "deskcommcrm", "deskcommcrm-crivo-interno"],
+  },  "lib/nuvemshop/config.ts": {
     categoria: "PROTOCOLO",
     motivo:
       "User-Agent exigido pela Nuvemshop, que identifica a aplicação registrada na plataforma deles. Trocar pelo nome do revendedor descreveria uma aplicação que não existe lá",
@@ -804,6 +815,11 @@ type CategoriaDeHost =
 type EntradaDeHost = { categoria: CategoriaDeHost; motivo: string };
 
 const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
+  "api.github.com": {
+    categoria: "FORNECEDOR",
+    motivo:
+      "endpoint oficial da GitHub API consultado pelo Crivo interno para comparar referências do upstream; é destino de chamada do fornecedor, não marca ou host da instalação.",
+  },
   "datamanager.googleapis.com": {
     categoria: "FORNECEDOR",
     motivo: "endpoint oficial da Google Data Manager API: recebe conversões e consulta o processamento na conta autorizada pela própria organização. O destino pertence ao fornecedor e não à instalação do CRM.",
