@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useT } from "@/hooks/i18n/useT";
 import { apiClient } from "@/lib/api/client";
 
 type Risk = "low" | "medium" | "high" | "critical";
@@ -94,6 +95,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 }
 
 export function UpdateCenterPanel() {
+  const t = useT();
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["system-upstream"],
@@ -124,31 +126,30 @@ export function UpdateCenterPanel() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle id="central-updates-title" className="text-lg">
-                Central de Atualizações
+                {t("Central de Atualizações")}
               </CardTitle>
               <p className="mt-1 max-w-2xl text-sm text-text-muted">
-                O Crivo interno monitora e analisa o upstream. Esta área não aplica atualização,
-                migration, merge ou rebase.
+                {t("O Crivo interno monitora e analisa o upstream. Esta área não aplica atualização, migration, merge ou rebase.")}
               </p>
             </div>
             <Button onClick={() => check.mutate()} disabled={check.isPending} variant="secondary">
-              {check.isPending ? "Verificando…" : "Executar nova verificação"}
+              {check.isPending ? t("Verificando…") : t("Executar nova verificação")}
             </Button>
           </div>
         </CardHeader>
         <CardContent>
           {query.isLoading ? (
-            <p className="text-sm text-text-muted">Carregando estado do Crivo…</p>
+            <p className="text-sm text-text-muted">{t("Carregando estado do Crivo…")}</p>
           ) : query.isError ? (
-            <p className="text-sm text-error">Não foi possível carregar o estado do Crivo.</p>
+            <p className="text-sm text-error">{t("Não foi possível carregar o estado do Crivo.")}</p>
           ) : (
             <div className="space-y-5">
               <div className="rounded-md border border-border p-4" aria-live="polite">
-                <p className="text-xs uppercase tracking-wide text-text-muted">Status</p>
-                <p className="mt-1 text-lg font-semibold">{estado(state)}</p>
+                <p className="text-xs uppercase tracking-wide text-text-muted">{t("Status")}</p>
+                <p className="mt-1 text-lg font-semibold">{t(estado(state))}</p>
                 {check.isError ? (
                   <p className="mt-2 text-sm text-error">
-                    A verificação manual falhou. O estado anterior foi preservado.
+                    {t("A verificação manual falhou. O estado anterior foi preservado.")}
                   </p>
                 ) : null}
               </div>
@@ -158,19 +159,19 @@ export function UpdateCenterPanel() {
                 <Stat label="Branch" value={state?.default_branch || "—"} />
                 <Stat label="HEAD upstream" value={shortSha(state?.latest_upstream_commit)} />
                 <Stat
-                  label="Referência JS Imóveis"
+                  label={t("Referência JS Imóveis")}
                   value={state?.analysis_status === "completed" ? summary.fork_reference || "—" : "—"}
                 />
                 <Stat
-                  label="SHA JS Imóveis"
+                  label={t("SHA JS Imóveis")}
                   value={
                     state?.analysis_status === "completed"
                       ? shortSha(summary.fork_commit || state?.local_commit)
                       : "—"
                   }
                 />
-                <Stat label="Última verificação" value={when(state?.last_checked_at)} />
-                <Stat label="Próxima verificação" value={when(state?.next_check_at)} />
+                <Stat label={t("Última verificação")} value={when(state?.last_checked_at)} />
+                <Stat label={t("Próxima verificação")} value={when(state?.next_check_at)} />
                 <Stat label="Tag" value={state?.last_seen_tag || "—"} />
                 <Stat label="Release" value={state?.last_seen_release || "—"} />
               </div>
@@ -183,30 +184,30 @@ export function UpdateCenterPanel() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-4">
-                <Stat label="Adicionados" value={counts.added ?? 0} />
-                <Stat label="Modificados" value={counts.modified ?? 0} />
-                <Stat label="Excluídos" value={counts.deleted ?? 0} />
-                <Stat label="Renomeados" value={counts.renamed ?? 0} />
+                <Stat label={t("Adicionados")} value={counts.added ?? 0} />
+                <Stat label={t("Modificados")} value={counts.modified ?? 0} />
+                <Stat label={t("Excluídos")} value={counts.deleted ?? 0} />
+                <Stat label={t("Renomeados")} value={counts.renamed ?? 0} />
               </div>
 
               <div className="rounded-md border border-border p-4 text-sm">
-                <p className="font-medium">Paridade da análise</p>
+                <p className="font-medium">{t("Paridade da análise")}</p>
                 <p className="mt-1 text-text-muted">
                   Commits: {summary.total_commits_analyzed ?? 0}/{summary.total_commits_delta ?? 0} · Arquivos:{" "}
                   {summary.total_files_analyzed ?? 0}/{summary.total_files_delta ?? 0}
                 </p>
                 <p className="mt-1 font-medium">
                   {analysisComplete
-                    ? "ANÁLISE COMPLETA"
+                    ? t("ANÁLISE COMPLETA")
                     : state?.analysis_status === "never"
-                      ? "AINDA NÃO MEDIDA"
+                      ? t("AINDA NÃO MEDIDA")
                       : "ANALYSIS_INCOMPLETE"}
                 </p>
               </div>
 
               {Object.keys(summary.categories ?? {}).length > 0 ? (
                 <details className="rounded-md border border-border p-4">
-                  <summary className="cursor-pointer font-medium">Áreas afetadas</summary>
+                  <summary className="cursor-pointer font-medium">{t("Áreas afetadas")}</summary>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {Object.entries(summary.categories ?? {})
                       .sort((a, b) => b[1] - a[1])
@@ -223,7 +224,7 @@ export function UpdateCenterPanel() {
               {(summary.conflicts?.length ?? 0) > 0 ? (
                 <details className="rounded-md border border-border p-4">
                   <summary className="cursor-pointer font-medium">
-                    Conflitos prováveis ({summary.conflicts?.length})
+                    {t("Conflitos prováveis (")}{summary.conflicts?.length})
                   </summary>
                   <ul className="mt-3 space-y-2 text-sm">
                     {summary.conflicts?.slice(0, 100).map((conflict) => (
@@ -238,7 +239,7 @@ export function UpdateCenterPanel() {
               {(summary.files?.length ?? 0) > 0 ? (
                 <details className="rounded-md border border-border p-4">
                   <summary className="cursor-pointer font-medium">
-                    Arquivos analisados ({summary.files?.length})
+                    {t("Arquivos analisados (")}{summary.files?.length})
                   </summary>
                   <div className="mt-3 max-h-96 overflow-auto">
                     <ul className="space-y-1 text-xs">
@@ -254,17 +255,17 @@ export function UpdateCenterPanel() {
 
               {(query.data?.history.length ?? 0) > 0 ? (
                 <details className="rounded-md border border-border p-4">
-                  <summary className="cursor-pointer font-medium">Histórico de verificações</summary>
+                  <summary className="cursor-pointer font-medium">{t("Histórico de verificações")}</summary>
                   <div className="mt-3 overflow-x-auto">
                     <table className="w-full min-w-[720px] text-left text-xs">
                       <thead className="text-text-muted">
                         <tr>
-                          <th className="pb-2 pr-4">Quando</th>
-                          <th className="pb-2 pr-4">Resultado</th>
+                          <th className="pb-2 pr-4">{t("Quando")}</th>
+                          <th className="pb-2 pr-4">{t("Resultado")}</th>
                           <th className="pb-2 pr-4">HEAD</th>
-                          <th className="pb-2 pr-4">Delta</th>
-                          <th className="pb-2 pr-4">Risco</th>
-                          <th className="pb-2">Erro</th>
+                          <th className="pb-2 pr-4">{t("Delta")}</th>
+                          <th className="pb-2 pr-4">{t("Risco")}</th>
+                          <th className="pb-2">{t("Erro")}</th>
                         </tr>
                       </thead>
                       <tbody>
