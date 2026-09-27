@@ -88,7 +88,7 @@ function estado(state: UpstreamState | null): string {
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="rounded-md border border-border bg-surface-elevated p-3">
-      <p className="text-xs uppercase tracking-wide text-text-muted">{label}</p>
+      <p className="text-xs tracking-wide text-text-muted uppercase">{label}</p>
       <p className="mt-1 font-medium text-text">{value}</p>
     </div>
   );
@@ -129,7 +129,9 @@ export function UpdateCenterPanel() {
                 {t("Central de Atualizações")}
               </CardTitle>
               <p className="mt-1 max-w-2xl text-sm text-text-muted">
-                {t("O Crivo interno monitora e analisa o upstream. Esta área não aplica atualização, migration, merge ou rebase.")}
+                {t(
+                  "O Crivo interno monitora e analisa o upstream. Esta área não aplica atualização, migration, merge ou rebase.",
+                )}
               </p>
             </div>
             <Button onClick={() => check.mutate()} disabled={check.isPending} variant="secondary">
@@ -141,11 +143,13 @@ export function UpdateCenterPanel() {
           {query.isLoading ? (
             <p className="text-sm text-text-muted">{t("Carregando estado do Crivo…")}</p>
           ) : query.isError ? (
-            <p className="text-sm text-error">{t("Não foi possível carregar o estado do Crivo.")}</p>
+            <p className="text-sm text-error">
+              {t("Não foi possível carregar o estado do Crivo.")}
+            </p>
           ) : (
             <div className="space-y-5">
               <div className="rounded-md border border-border p-4" aria-live="polite">
-                <p className="text-xs uppercase tracking-wide text-text-muted">{t("Status")}</p>
+                <p className="text-xs tracking-wide text-text-muted uppercase">{t("Status")}</p>
                 <p className="mt-1 text-lg font-semibold">{t(estado(state))}</p>
                 {check.isError ? (
                   <p className="mt-2 text-sm text-error">
@@ -160,7 +164,9 @@ export function UpdateCenterPanel() {
                 <Stat label="HEAD upstream" value={shortSha(state?.latest_upstream_commit)} />
                 <Stat
                   label={t("Referência JS Imóveis")}
-                  value={state?.analysis_status === "completed" ? summary.fork_reference || "—" : "—"}
+                  value={
+                    state?.analysis_status === "completed" ? summary.fork_reference || "—" : "—"
+                  }
                 />
                 <Stat
                   label={t("SHA JS Imóveis")}
@@ -177,8 +183,14 @@ export function UpdateCenterPanel() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat label="Commits no delta" value={summary.total_commits_delta ?? state?.commits_behind ?? 0} />
-                <Stat label="Arquivos no delta" value={summary.total_files_delta ?? state?.files_changed ?? 0} />
+                <Stat
+                  label="Commits no delta"
+                  value={summary.total_commits_delta ?? state?.commits_behind ?? 0}
+                />
+                <Stat
+                  label="Arquivos no delta"
+                  value={summary.total_files_delta ?? state?.files_changed ?? 0}
+                />
                 <Stat label="Risco" value={risco(state?.risk_level)} />
                 <Stat label="Conflitos JS" value={summary.conflict_status ?? "—"} />
               </div>
@@ -193,8 +205,8 @@ export function UpdateCenterPanel() {
               <div className="rounded-md border border-border p-4 text-sm">
                 <p className="font-medium">{t("Paridade da análise")}</p>
                 <p className="mt-1 text-text-muted">
-                  Commits: {summary.total_commits_analyzed ?? 0}/{summary.total_commits_delta ?? 0} · Arquivos:{" "}
-                  {summary.total_files_analyzed ?? 0}/{summary.total_files_delta ?? 0}
+                  Commits: {summary.total_commits_analyzed ?? 0}/{summary.total_commits_delta ?? 0}{" "}
+                  · Arquivos: {summary.total_files_analyzed ?? 0}/{summary.total_files_delta ?? 0}
                 </p>
                 <p className="mt-1 font-medium">
                   {analysisComplete
@@ -224,7 +236,8 @@ export function UpdateCenterPanel() {
               {(summary.conflicts?.length ?? 0) > 0 ? (
                 <details className="rounded-md border border-border p-4">
                   <summary className="cursor-pointer font-medium">
-                    {t("Conflitos prováveis (")}{summary.conflicts?.length})
+                    {t("Conflitos prováveis (")}
+                    {summary.conflicts?.length})
                   </summary>
                   <ul className="mt-3 space-y-2 text-sm">
                     {summary.conflicts?.slice(0, 100).map((conflict) => (
@@ -239,13 +252,15 @@ export function UpdateCenterPanel() {
               {(summary.files?.length ?? 0) > 0 ? (
                 <details className="rounded-md border border-border p-4">
                   <summary className="cursor-pointer font-medium">
-                    {t("Arquivos analisados (")}{summary.files?.length})
+                    {t("Arquivos analisados (")}
+                    {summary.files?.length})
                   </summary>
                   <div className="mt-3 max-h-96 overflow-auto">
                     <ul className="space-y-1 text-xs">
                       {summary.files?.map((file) => (
                         <li key={`${file.status}:${file.path}`} className="break-all">
-                          {file.status.toUpperCase()} · {file.area} · {risco(file.risk)} · {file.path}
+                          {file.status.toUpperCase()} · {file.area} · {risco(file.risk)} ·{" "}
+                          {file.path}
                         </li>
                       ))}
                     </ul>
@@ -255,16 +270,18 @@ export function UpdateCenterPanel() {
 
               {(query.data?.history.length ?? 0) > 0 ? (
                 <details className="rounded-md border border-border p-4">
-                  <summary className="cursor-pointer font-medium">{t("Histórico de verificações")}</summary>
+                  <summary className="cursor-pointer font-medium">
+                    {t("Histórico de verificações")}
+                  </summary>
                   <div className="mt-3 overflow-x-auto">
                     <table className="w-full min-w-[720px] text-left text-xs">
                       <thead className="text-text-muted">
                         <tr>
-                          <th className="pb-2 pr-4">{t("Quando")}</th>
-                          <th className="pb-2 pr-4">{t("Resultado")}</th>
-                          <th className="pb-2 pr-4">HEAD</th>
-                          <th className="pb-2 pr-4">{t("Delta")}</th>
-                          <th className="pb-2 pr-4">{t("Risco")}</th>
+                          <th className="pr-4 pb-2">{t("Quando")}</th>
+                          <th className="pr-4 pb-2">{t("Resultado")}</th>
+                          <th className="pr-4 pb-2">HEAD</th>
+                          <th className="pr-4 pb-2">{t("Delta")}</th>
+                          <th className="pr-4 pb-2">{t("Risco")}</th>
                           <th className="pb-2">{t("Erro")}</th>
                         </tr>
                       </thead>
@@ -274,7 +291,9 @@ export function UpdateCenterPanel() {
                             <td className="py-2 pr-4">{when(row.started_at)}</td>
                             <td className="py-2 pr-4">{row.result}</td>
                             <td className="py-2 pr-4">{shortSha(row.upstream_commit)}</td>
-                            <td className="py-2 pr-4">{row.commits_delta}c / {row.files_delta}a</td>
+                            <td className="py-2 pr-4">
+                              {row.commits_delta}c / {row.files_delta}a
+                            </td>
                             <td className="py-2 pr-4">{risco(row.risk_level)}</td>
                             <td className="py-2">{row.error || "—"}</td>
                           </tr>
