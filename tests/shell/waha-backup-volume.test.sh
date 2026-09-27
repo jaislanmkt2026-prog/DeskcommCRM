@@ -165,5 +165,33 @@ done
 check "backup.sh só anuncia as sessões depois de provar que têm conteúdo" \
   grep -q 'tar_tem_sessao' "$KIT_DIR/backup.sh"
 
+echo "retenção mínima do rollback:"
+rm -f "$PROJ"/backups/db-ret-*.sql.gz
+for i in $(seq -w 1 16); do
+  printf 'fixture %s\n' "$i" | gzip -c > "$PROJ/backups/db-ret-$i.sql.gz"
+  touch -d "$((10#$i)) minutes ago" "$PROJ/backups/db-ret-$i.sql.gz"
+done
+backup "$WORK/saida-retencao-recente.txt" abc123 'volume|deskcommcrm_waha-data|'
+check "mais de 14 dumps com menos de 72h são todos preservados" \
+  test "$(find "$PROJ/backups" -name 'db-ret-*.sql.gz' | wc -l)" -eq 16
+
+# Dois dos mais antigos passam de 72h. Como já há pelo menos 14 artefatos mais
+# novos, só eles podem sair; a janela de rollback nunca é encurtada para caber
+# na contagem histórica de 14.
+touch -d '4 days ago' "$PROJ/backups/db-ret-15.sql.gz" "$PROJ/backups/db-ret-16.sql.gz"
+backup "$WORK/saida-retencao-antiga.txt" abc123 'volume|deskcommcrm_waha-data|'
+check "artefato além dos 14 e mais velho que 72h pode ser podado" \
+  bash -c 'test ! -e "$1/db-ret-15.sql.gz" && test ! -e "$1/db-ret-16.sql.gz"' _ "$PROJ/backups"
+check "os 14 restantes continuam preservados" \
+  test "$(find "$PROJ/backups" -name 'db-ret-*.sql.gz' | wc -l)" -eq 14
+
+echo "restore supervisionado:"
+check "restore falha no primeiro erro SQL" \
+  grep -q 'psql -1 -v ON_ERROR_STOP=1' "$KIT_DIR/restore.sh"
+check "restore do banco é uma transação só" \
+  grep -q 'psql -1 -v ON_ERROR_STOP=1' "$KIT_DIR/restore.sh"
+check "restore aceita modo só-banco para rollback automático" \
+  grep -q -- '--db-only' "$KIT_DIR/restore.sh"
+
 [ "$FAILS" -eq 0 ] || { echo "✖ $FAILS falha(s)" >&2; exit 1; }
 echo 'ok: backup e restore resolvem o volume físico das sessões WAHA e o vazio não passa por backup'

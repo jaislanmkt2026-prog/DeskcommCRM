@@ -154,6 +154,11 @@ plantar_backup_duble() {
   cat > "$destino" <<STUB
 #!/usr/bin/env bash
 printf 'zero=%s\npwd=%s\n' "\$0" "\$PWD" > "$marca"
+dump="${marca}.sql.gz"
+: > "\$dump"
+if [ -n "\${DESKCOMM_BACKUP_MANIFEST:-}" ]; then
+  printf '%s\n' "\$dump" > "\$DESKCOMM_BACKUP_MANIFEST"
+fi
 STUB
   chmod +x "$destino"
 }

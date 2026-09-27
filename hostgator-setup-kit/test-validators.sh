@@ -1728,6 +1728,10 @@ montar_vps() {
   # banco / ao fim / ao up -d", que le como defeito do produto e e cenario faltando.
   cp install.sh update.sh backup.sh _common.sh _i18n.sh marca-emails.sh manutencao.sh "$raiz/"
   cp -R manutencao "$raiz/"
+  # O update.sh agora faz preflight real de árvore limpa. A instalação real
+  # ignora .env, locks, logs e backups; o fixture precisa carregar a mesma
+  # política, senão seus próprios artefatos runtime viram "mudança local".
+  cp ../.gitignore "$VPS_PROJ/.gitignore"
   : > "$VPS_PROJ/docker-compose.prod.yml"
   cat > "$raiz/bin/docker"
   # Só o v_supabase_url exige resposta online (000 reprova); os outros toleram.
@@ -2062,7 +2066,12 @@ echo "packaging: a instalação resolve a última versão publicada"
     git push --quiet origin HEAD --tags 2>/dev/null
   )
 
-  achou="$(ultima_versao_publicada "$repo_falso/origem.git")"
+  # Rode fora do worktree da suíte. Em Windows/Git Bash, um worktree criado
+  # pelo Git for Windows pode ter `.git` apontando para `C:/...`; o bash mapeia
+  # isso como caminho relativo e o `git ls-remote --sort` tenta ler config de um
+  # repositório inválido. O cenário quer medir o REMOTO, então um cwd descartável
+  # e válido é o ambiente hermético correto.
+  achou="$(cd "$trabalho/w" && ultima_versao_publicada "$repo_falso/origem.git")"
   if [ "$achou" != "1.10.0" ]; then
     printf '  ✗ escolheu a versão errada: esperado 1.10.0, veio "%s"\n' "$achou"
     printf '     (ordem alfabética põe v1.9.0 depois de v1.10.0 — precisa de --sort=-v:refname)\n'
@@ -2071,7 +2080,7 @@ echo "packaging: a instalação resolve a última versão publicada"
   printf '  ✓ entre v1.0.0/v1.2.0/v1.9.0/v1.10.0, escolhe 1.10.0 (ordem de VERSÃO, não alfabética)\n'
 
   vazio="$(mktemp -d)"; git init --quiet --bare "$vazio/sem-tags.git"
-  semtag="$(ultima_versao_publicada "$vazio/sem-tags.git")"
+  semtag="$(cd "$trabalho/w" && ultima_versao_publicada "$vazio/sem-tags.git")"
   if [ -n "$semtag" ]; then
     printf '  ✗ remoto sem tag devia devolver vazio, veio "%s"\n' "$semtag"
     rm -rf "$repo_falso" "$trabalho" "$vazio"; exit 1

@@ -37,6 +37,10 @@ export PATH="$FAKEBIN:$PATH"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP" "$FAKEBIN"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+# Tudo abaixo é uma prova em repositórios descartáveis. Sair do checkout que
+# invocou a suíte também evita que o Git Linux tente interpretar o `.git` de um
+# worktree criado pelo Git for Windows (`gitdir: C:/...`) como caminho relativo.
+cd "$TMP" || exit 1
 # ── isolamento do git: nada aqui escreve fora de "$TMP" ─────────────────────
 # Um `cfg "$dir" user.*` grava onde o git RESOLVER o repositório, e não
 # necessariamente em "$dir": um GIT_DIR herdado (rodar de dentro de um hook, de um

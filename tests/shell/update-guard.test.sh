@@ -87,7 +87,16 @@ case " $* " in
   # '"status":"ok"' no JSON cru que o kit dava por saudável um app com o BANCO
   # FORA, desde que qualquer outro check estivesse de pé.
   # São duas linhas porque o probe imprime o status geral e depois o corpo.
-  *" exec "*)   printf 'healthy\n{"data":{"status":"healthy","version":"0.1.0","checks":{"supabase":{"status":"ok","latency_ms":268},"redis":{"status":"ok","latency_ms":4},"waha":{"status":"ok","latency_ms":6}}}}\n' ;;
+  *" exec "*)
+    if [ "${FORCE_UNHEALTHY_ALWAYS:-0}" = "1" ]; then
+      printf 'unhealthy\n{"data":{"status":"unhealthy","checks":{"supabase":{"status":"error"}}}}\n'
+    elif [ "${FORCE_UNHEALTHY_AFTER_DB:-0}" = "1" ] \
+       && [ -n "${DB_STATE_FILE:-}" ] \
+       && [ "$(cat "$DB_STATE_FILE" 2>/dev/null || true)" = "novo" ]; then
+      printf 'unhealthy\n{"data":{"status":"unhealthy","checks":{"supabase":{"status":"error"}}}}\n'
+    else
+      printf 'healthy\n{"data":{"status":"healthy","version":"0.1.0","checks":{"supabase":{"status":"ok","latency_ms":268},"redis":{"status":"ok","latency_ms":4},"waha":{"status":"ok","latency_ms":6}}}}\n'
+    fi ;;
   # Imagem em execução, que o agent.sh guarda para poder voltar. Precisa
   # devolver algo: com PREV_IMAGE vazio o rollback nem seria tentado, e o teste
   # do agente passaria mesmo com o defeito de volta.
@@ -101,6 +110,10 @@ case " $* " in
   # Aplicação do baseline. Só com BASELINE_ROTEIRO no ambiente (caso 4c): cada
   # chamada imprime a próxima passada do roteiro. Fora dele, sai limpa como antes.
   *" -f /b.sql "*)
+    if [ -n "${DB_STATE_FILE:-}" ]; then
+      printf 'novo\n' > "$DB_STATE_FILE"
+      [ -z "${DB_HISTORY_FILE:-}" ] || printf 'novo\n' >> "$DB_HISTORY_FILE"
+    fi
     if [ -n "${BASELINE_ROTEIRO:-}" ]; then
       n=$(( $(cat "$BASELINE_ROTEIRO/n" 2>/dev/null || echo 0) + 1 ))
       printf '%s' "$n" > "$BASELINE_ROTEIRO/n"
@@ -204,9 +217,26 @@ cp -R "$REPO_ROOT/hostgator-setup-kit/manutencao" "$PROJ/hostgator-setup-kit/"
 # backup.sh de mentira: deixa um rastro. É o marco "o script já começou a
 # mexer" — a guarda de retrocesso só vale se abortar ANTES dele.
 BACKUP_MARK="$WORK/backup-rodou"
+RESTORE_LOG="$WORK/restore.log"
 cat > "$PROJ/hostgator-setup-kit/backup.sh" <<STUB
 #!/usr/bin/env bash
 touch "$BACKUP_MARK"
+dump="$WORK/fake-db.sql.gz"
+printf 'select 1;\n' | gzip -c > "\$dump"
+if [ -n "\${DESKCOMM_BACKUP_MANIFEST:-}" ]; then
+  printf '%s\n' "\$dump" > "\$DESKCOMM_BACKUP_MANIFEST"
+fi
+STUB
+cat > "$PROJ/hostgator-setup-kit/restore.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$RESTORE_LOG"
+printf 'extensions=%s\n' "\${DESKCOMM_PRE_UPDATE_EXTENSIONS-NAO_DEFINIDA}" >> "$RESTORE_LOG"
+[ "\${FAIL_RESTORE:-0}" = "1" ] && exit 1
+if [ -n "\${DB_STATE_FILE:-}" ]; then
+  printf 'antigo\n' > "\$DB_STATE_FILE"
+  [ -z "\${DB_HISTORY_FILE:-}" ] || printf 'antigo\n' >> "\$DB_HISTORY_FILE"
+fi
+exit 0
 STUB
 # shellcheck disable=SC2016  # o ${APP_IMAGE} é literal DENTRO do compose
 printf 'services:\n  app:\n    image: \${APP_IMAGE:-x}\n' > "$PROJ/docker-compose.prod.yml"
@@ -224,6 +254,13 @@ INTERNAL_SECRET=segredo
 NUVEMSHOP_OAUTH_ENCRYPTION_KEY=chave
 ENV
 chmod 600 "$PROJ/.env"
+chmod +x "$PROJ/hostgator-setup-kit/backup.sh" "$PROJ/hostgator-setup-kit/restore.sh"
+cat > "$PROJ/.gitignore" <<'IGNORE'
+.env*
+.update.*
+*.log
+backups/
+IGNORE
 
 cd "$PROJ" || exit 1
 git init --quiet
@@ -244,6 +281,14 @@ run_update() {  # run_update <args...> → saída em $OUTFILE, status em $RC
   RC=0
   bash hostgator-setup-kit/update.sh "$@" > "$OUTFILE" 2>&1 || RC=$?
 }
+
+echo "── 0. Worktree sujo bloqueia antes do backup"
+printf 'mudança local\n' > local-nao-rastreado.txt
+run_update --to v0.9.0 --force
+check "aborta com status != 0" test "$RC" -ne 0
+check "explica que há mudanças locais" grep -q "Há mudanças locais no repositório" "$OUTFILE"
+check "não chegou a rodar o backup" test ! -f "$BACKUP_MARK"
+rm -f local-nao-rastreado.txt
 
 echo "── 1. Alvo anterior ao instalado é recusado antes do backup"
 run_update --to v0.9.0
@@ -373,7 +418,7 @@ rm -rf "$ROTEIRO_UG"; mkdir -p "$ROTEIRO_UG"
 cp "$ROTEIRO_UG/passada.1" "$ROTEIRO_UG/passada.2"; cp "$ROTEIRO_UG/passada.1" "$ROTEIRO_UG/passada.3"
 : > "$DOCKER_LOG"
 BASELINE_ROTEIRO="$ROTEIRO_UG" BASELINE_ESPERA_S=0 run_update --to v1.1.0 --force
-check "lista de erros maior que o buffer do pipe não mata o update.sh (para com 1)" test "$RC" -eq 1
+check "lista de erros maior que o buffer do pipe não mata o update.sh (faz rollback)" test "$RC" -eq 70
 check "  a disputa no topo foi reconhecida (3 passadas)" test "$(grep -c -- '-f /b.sql' "$DOCKER_LOG")" -eq 3
 check "  o aviso de PERMISSÃO chegou à tela" grep -q "erros de PERMISSÃO" "$OUTFILE"
 check "  e o fim diz que o banco NÃO terminou limpo" grep -q "banco NÃO terminou limpo" "$OUTFILE"
@@ -381,7 +426,8 @@ check "  e o fim diz que o banco NÃO terminou limpo" grep -q "banco NÃO termin
 # duas metades são ditas — escolher uma escondia a ação possível da outra.
 check "  a metade que repetir cura é dita" grep -q "Parte não aplicou porque o banco seguiu ocupado" "$OUTFILE"
 check "  e a metade que repetir NÃO cura também" grep -q "esses repetir não cura" "$OUTFILE"
-check "  e o fim orienta a conexão do dono" test -n "$(tail -n 8 "$OUTFILE" | grep -F 'SUPABASE_DB_ADMIN_URL' || true)"
+check "  orienta a conexão do dono antes do rollback" grep -qF 'SUPABASE_DB_ADMIN_URL' "$OUTFILE"
+check "  e fecha com rollback supervisionado" grep -q 'rollback supervisionado concluído' "$OUTFILE"
 
 # Só permissão, sem disputa nenhuma: uma passada, e o fim diz o que fazer.
 rm -rf "$ROTEIRO_UG"; mkdir -p "$ROTEIRO_UG"
@@ -390,8 +436,8 @@ for i in $(seq 1 200); do printf 'psql:/b.sql:%s: ERROR:  must be owner of table
 BASELINE_ROTEIRO="$ROTEIRO_UG" BASELINE_ESPERA_S=0 run_update --to v1.1.0 --force
 check "só permissão: uma passada (repetir não cura)" test "$(grep -c -- '-f /b.sql' "$DOCKER_LOG")" -eq 1
 check "  sem a metade de banco ocupado (não houve disputa)" test -z "$(grep 'Parte não aplicou' "$OUTFILE" || true)"
-check "  e o FIM orienta a conexão do dono" test -n "$(tail -n 8 "$OUTFILE" | grep -F 'SUPABASE_DB_ADMIN_URL' || true)"
-check "  e PARA com 1, sem baixar a imagem nova" test "$RC" -eq 1
+check "  orienta a conexão do dono antes do rollback" grep -qF 'SUPABASE_DB_ADMIN_URL' "$OUTFILE"
+check "  e faz rollback supervisionado, sem baixar a imagem nova" test "$RC" -eq 70
 check "  (nenhum pull depois do banco)" test -z "$(grep -E ' pull( |$)' "$DOCKER_LOG" || true)"
 
 # Erro que repetir não cura DEPOIS de um `drop policy` que o `create` não refez.
@@ -399,17 +445,20 @@ check "  (nenhum pull depois do banco)" test -z "$(grep -E ' pull( |$)' "$DOCKER
 # antes dela, o trap subia app, worker e scheduler sem a regra — tela vazia para
 # todo mundo. Com a ordem certa o CRM fica parado com o aviso vermelho.
 printf 'drop policy if exists "leitura" on public.leads;\ncreate policy "leitura" on public.leads using (true);\n' > "$PROJ/supabase/baseline.sql"
+git add supabase/baseline.sql
+git commit --quiet -m "baseline alvo com policy"
+git tag v1.1.1
+git checkout --quiet v1.1.0
 rm -rf "$ROTEIRO_UG"; mkdir -p "$ROTEIRO_UG"
 printf 'psql:/b.sql:2: ERROR:  column "organization_id" does not exist\n' > "$ROTEIRO_UG/passada.1"
 : > "$DOCKER_LOG"
-BASELINE_ROTEIRO="$ROTEIRO_UG" BASELINE_ESPERA_S=0 run_update --to v1.1.0 --force
+BASELINE_ROTEIRO="$ROTEIRO_UG" BASELINE_ESPERA_S=0 run_update --to v1.1.1
 check "regra derrubada + erro não curável: o baseline aplicado tinha a regra (controle)" \
-  grep -q 'create policy "leitura" on public.leads' "$PROJ/supabase/baseline.sql"
-check "  para com 1" test "$RC" -eq 1
+  bash -c "git show v1.1.1:supabase/baseline.sql | grep -q 'create policy \"leitura\" on public.leads'"
+check "  falha pós-DDL volta com rollback supervisionado" test "$RC" -eq 70
 check "  a conferência das regras rodou e acusou a ausente" grep -q "REGRAS DE ISOLAMENTO AUSENTES" "$OUTFILE"
-check "  e o CRM NÃO subiu depois do banco" \
-  test -z "$(awk '/-f \/b.sql/ {b=1} b && / up -d/' "$DOCKER_LOG")"
-git -C "$PROJ" checkout --quiet -- supabase/baseline.sql
+check "  e o CRM antigo volta só depois do rollback completo" \
+  grep -q 'rollback supervisionado concluído' "$OUTFILE"
 
 # ── Clone RASO: a topologia que o install.sh realmente entrega ───────────────
 # `install.sh` instala com `git clone --depth 1`. Num repositório raso o
@@ -774,6 +823,73 @@ IMAGEM_EM_DIA=1 run_update --to v1.1.0
 check "sem aviso de pé: não mexe em contêiner nenhum" \
   bash -c "! grep -q 'rm -f deskcomm-manutencao' '$DOCKER_LOG'"
 check "  e não fala de aviso preso" bash -c "! grep -q 'aviso de manutenção preso' '$OUTFILE'"
+
+echo "── 14. Falha depois de DDL restaura banco + código + .env da mesma rodada"
+cd "$PROJ" || exit 1
+git checkout --quiet main 2>/dev/null || git checkout --quiet master
+echo v12 > v12.txt; git add v12.txt; git commit --quiet -m "v1.2.0"; git tag v1.2.0
+git checkout --quiet v1.1.0
+PRE14_SHA="$(git rev-parse HEAD)"
+cp .env "$WORK/env-antes-14"
+DB14="$WORK/db-14"; printf 'antigo\n' > "$DB14"
+HIST14="$WORK/db-14.history"; : > "$HIST14"
+ROTEIRO14="$WORK/roteiro-14"; mkdir -p "$ROTEIRO14"
+printf 'psql:/b.sql:1: ERROR:  permission denied for table exemplo\n' > "$ROTEIRO14/passada.1"
+: > "$RESTORE_LOG"; : > "$DOCKER_LOG"
+DB_STATE_FILE="$DB14" DB_HISTORY_FILE="$HIST14" BASELINE_ROTEIRO="$ROTEIRO14" BASELINE_ESPERA_S=0 run_update --to v1.2.0
+check "a falha sai como rollback supervisionado (rc 70)" test "$RC" -eq 70
+check "o banco foi mutado e depois restaurado" \
+  bash -c "test \"\$(cat '$HIST14')\" = \$'novo\\nantigo' && test \"\$(cat '$DB14')\" = antigo"
+check "o restore usou exatamente o dump da rodada e modo db-only" \
+  grep -Eq '^--yes --db-only .*/fake-db\.sql\.gz$' "$RESTORE_LOG"
+check "o rollback passa ao restore o inventário de extensões pré-update" \
+  grep -q '^extensions=' "$RESTORE_LOG"
+check "o código voltou ao SHA anterior" test "$(git rev-parse HEAD)" = "$PRE14_SHA"
+check "o .env voltou byte a byte" cmp -s .env "$WORK/env-antes-14"
+check "app/worker/scheduler sobem só depois de código e configuração voltarem" \
+  grep -q ' up -d app worker scheduler' "$DOCKER_LOG"
+check "o estado anterior passa por healthcheck antes de declarar rollback completo" \
+  grep -q ' exec ' "$DOCKER_LOG"
+check "a saída confirma rollback completo" grep -q 'rollback supervisionado concluído' "$OUTFILE"
+
+echo "── 15. Restore falhou: atualização fica fail-closed em manutenção"
+git checkout --quiet v1.1.0
+cp .env "$WORK/env-antes-15"
+DB15="$WORK/db-15"; printf 'antigo\n' > "$DB15"
+HIST15="$WORK/db-15.history"; : > "$HIST15"
+ROTEIRO15="$WORK/roteiro-15"; mkdir -p "$ROTEIRO15"
+printf 'psql:/b.sql:1: ERROR:  permission denied for table exemplo\n' > "$ROTEIRO15/passada.1"
+: > "$RESTORE_LOG"; : > "$DOCKER_LOG"
+FAIL_RESTORE=1 DB_STATE_FILE="$DB15" DB_HISTORY_FILE="$HIST15" BASELINE_ROTEIRO="$ROTEIRO15" BASELINE_ESPERA_S=0 run_update --to v1.2.0
+check "rollback incompleto tem rc distinto (71)" test "$RC" -eq 71
+check "o banco foi mutado e ficou mutado porque o restore falhou" \
+  bash -c "test \"\$(cat '$HIST15')\" = novo && test \"\$(cat '$DB15')\" = novo"
+check "o código ainda volta ao SHA anterior" test "$(git rev-parse HEAD)" = "$PRE14_SHA"
+check "o .env ainda volta ao anterior" cmp -s .env "$WORK/env-antes-15"
+check "app/worker/scheduler são parados explicitamente" \
+  grep -q ' stop app worker scheduler' "$DOCKER_LOG"
+check "e não são religados enquanto o banco segue inconsistente" \
+  bash -c "! grep -q ' up -d app worker scheduler' '$DOCKER_LOG'"
+check "a saída declara rollback incompleto e manutenção" \
+  grep -q 'ROLLBACK INCOMPLETO' "$OUTFILE"
+
+echo "── 16. Estado antigo restaurado mas sem saúde: também fica fail-closed"
+git checkout --quiet v1.1.0
+cp .env "$WORK/env-antes-16"
+DB16="$WORK/db-16"; printf 'antigo\n' > "$DB16"
+HIST16="$WORK/db-16.history"; : > "$HIST16"
+ROTEIRO16="$WORK/roteiro-16"; mkdir -p "$ROTEIRO16"
+printf 'psql:/b.sql:1: ERROR:  permission denied for table exemplo\n' > "$ROTEIRO16/passada.1"
+: > "$RESTORE_LOG"; : > "$DOCKER_LOG"
+FORCE_UNHEALTHY_ALWAYS=1 DB_STATE_FILE="$DB16" DB_HISTORY_FILE="$HIST16" BASELINE_ROTEIRO="$ROTEIRO16" BASELINE_ESPERA_S=0 run_update --to v1.2.0
+check "health pós-rollback reprovado vira rollback incompleto (rc 71)" test "$RC" -eq 71
+check "o banco chegou a voltar ao estado antigo" test "$(cat "$DB16")" = antigo
+check "o código chegou a voltar ao SHA anterior" test "$(git rev-parse HEAD)" = "$PRE14_SHA"
+check "o .env chegou a voltar ao anterior" cmp -s .env "$WORK/env-antes-16"
+check "o healthcheck foi realmente executado" grep -q ' exec ' "$DOCKER_LOG"
+check "e o CRM é derrubado de novo ao falhar a saúde" grep -q ' stop app worker scheduler' "$DOCKER_LOG"
+check "a saída explica que o estado restaurado não ficou saudável" \
+  grep -q 'healthcheck não ficou saudável' "$OUTFILE"
 
 if [ "$FAILS" -eq 0 ]; then echo "OK — todas as provas passaram."; else echo "FALHOU — $FAILS prova(s)."; fi
 exit $((FAILS > 0))
