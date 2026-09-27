@@ -32,6 +32,11 @@ function getSupabase() {
 
 /**
  * Adquire lock exclusivo. Retorna true se adquirido, false se já existe lock válido.
+ *
+ * B3 FIX: Após migration 0438, UNIQUE constraint em lock_name foi substituída por
+ * índice parcial (WHERE released_at IS NULL). Isso permite nova aquisição após release.
+ * A lógica abaixo insere nova linha a cada aquisição; o índice parcial garante que
+ * apenas uma linha com released_at IS NULL exista por lock_name.
  */
 export async function acquireUpdateLock(
   correlationId: string,
@@ -41,7 +46,23 @@ export async function acquireUpdateLock(
     Date.now() + LOCK_TTL_MINUTES * 60 * 1000,
   ).toISOString();
 
-  // Tenta inserir; se conflito, verifica se expirou
+  // Verifica primeiro se existe lock ativo (não expirado)
+  const { data: activeLock } = await supabase
+    .from("system_update_locks")
+    .select("*")
+    .eq("lock_name", LOCK_NAME)
+    .is("released_at", null)
+    .single();
+
+  if (activeLock) {
+    const expired = new Date(activeLock.expires_at) < new Date();
+    if (!expired) return false; // Lock válido existe — rejeitar
+
+    // Lock stale — liberar antes de tentar adquirir
+    await releaseStaleLock(LOCK_NAME);
+  }
+
+  // Inserir novo lock (índice parcial garante exclusividade)
   const { error } = await supabase.from("system_update_locks").insert({
     lock_name: LOCK_NAME,
     locked_by: correlationId,
@@ -50,33 +71,7 @@ export async function acquireUpdateLock(
     released_at: null,
   });
 
-  if (!error) return true;
-
-  // Conflito — verificar se lock existente expirou
-  const { data: existing } = await supabase
-    .from("system_update_locks")
-    .select("*")
-    .eq("lock_name", LOCK_NAME)
-    .is("released_at", null)
-    .single();
-
-  if (!existing) return false;
-
-  const expired = new Date(existing.expires_at) < new Date();
-  if (!expired) return false;
-
-  // Lock stale — liberar e reacquirir
-  await releaseStaleLock(LOCK_NAME);
-
-  const retry = await supabase.from("system_update_locks").insert({
-    lock_name: LOCK_NAME,
-    locked_by: correlationId,
-    locked_at: new Date().toISOString(),
-    expires_at: expiresAt,
-    released_at: null,
-  });
-
-  return !retry.error;
+  return !error;
 }
 
 /**
