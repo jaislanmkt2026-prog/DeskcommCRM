@@ -39404,7 +39404,8 @@ BEGIN
       AND t.relname = 'property_proposals'
       AND c.conname = 'property_proposals_price_list_id_fkey'
   ) THEN
-    alter table public.property_proposals`r`n      add constraint property_proposals_price_list_id_fkey
+    alter table public.property_proposals
+      add constraint property_proposals_price_list_id_fkey
       FOREIGN KEY (price_list_id) REFERENCES public.real_estate_price_lists(id)
       ON DELETE SET NULL;
   END IF;

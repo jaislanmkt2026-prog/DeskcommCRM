@@ -9,9 +9,11 @@ import { describe, expect, it } from "vitest";
  * Causa raiz: commit 376f96665 introduziu literalmente os chars U+0060 U+0072
  * U+0060 U+006E entre `property_proposals` e `add constraint` na migration
  * 0436_price_lists.sql, quebrando a sintaxe SQL. Este teste garante que nenhuma
- * migration ativa reintroduza esse padrão.
+ * migration ativa reintroduza esse padrão. O baseline materializado também
+ * precisa obedecer à mesma regra, porque é usado em instalação local fresca.
  */
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "supabase", "migrations");
+const BASELINE_FILE = join(__dirname, "..", "..", "supabase", "baseline.sql");
 
 function activeMigrationFiles(): string[] {
   return readdirSync(MIGRATIONS_DIR)
@@ -32,9 +34,12 @@ describe("migrations ativas não contêm escapes literais backtick-r-backtick-n 
         ofensores.push(arquivo.replace(MIGRATIONS_DIR + "\\", ""));
       }
     }
+    if (/`[rn]`/.test(readFileSync(BASELINE_FILE, "utf8"))) {
+      ofensores.push("baseline.sql");
+    }
     expect(
       ofensores,
-      `${ofensores.length} migration(ões) com escapes literais \`r\`n ou \`n\`: ${ofensores.join(", ")}. ` +
+      `${ofensores.length} artefato(s) SQL com escapes literais \`r\`n ou \`n\`: ${ofensores.join(", ")}. ` +
         "Substitua por quebra de linha real.",
     ).toEqual([]);
   });
