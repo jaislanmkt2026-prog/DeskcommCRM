@@ -7,6 +7,8 @@ source "$(dirname "$0")/_common.sh"
 enter_project
 
 BACKUP_DIR="${BACKUP_DIR:-$PROJECT_DIR/backups}"
+# update.sh pode pedir o caminho exato do dump validado desta rodada.
+BACKUP_MANIFEST="${DESKCOMM_BACKUP_MANIFEST:-}"
 mkdir -p "$BACKUP_DIR"
 # Timestamp vem do host (não do script) pra manter determinismo do kit.
 ts="$(date +%Y%m%d-%H%M%S)"
@@ -25,7 +27,7 @@ step "Dump do banco → $BACKUP_DIR/db-$ts.sql.gz"
 #   2. o pipe sai com zero mas o arquivo não se lê: `gzip -t` percorre o arquivo
 #      inteiro e confere o CRC. BACKUP QUE NINGUÉM CONSEGUE LER NÃO É BACKUP.
 parcial_db="$BACKUP_DIR/.db-$ts.sql.gz.parcial"
-if ! pg_container postgres:17-alpine pg_dump "$(url_do_schema)" --no-owner --no-privileges \
+if ! pg_container postgres:17-alpine pg_dump "$(url_do_schema)" --no-owner --no-privileges --clean --if-exists \
      | gzip > "$parcial_db"; then
   rm -f "$parcial_db"
   die "o dump do banco falhou no meio (disco cheio? pg_dump interrompido?) — removi o arquivo incompleto. Sem backup válido, não siga com atualização."
@@ -34,8 +36,12 @@ if ! gzip -t "$parcial_db" 2>/dev/null; then
   rm -f "$parcial_db"
   die "o dump do banco saiu corrompido (gzip -t reprovou) — removi o arquivo para ninguém confiar nele. Sem backup válido, não siga com atualização."
 fi
-mv "$parcial_db" "$BACKUP_DIR/db-$ts.sql.gz"
-c_grn "✓ banco: $(du -h "$BACKUP_DIR/db-$ts.sql.gz" | awk '{print $1}') (conferido)"
+DB_BACKUP_PATH="$BACKUP_DIR/db-$ts.sql.gz"
+mv "$parcial_db" "$DB_BACKUP_PATH"
+if [ -n "$BACKUP_MANIFEST" ]; then
+  printf '%s\n' "$DB_BACKUP_PATH" > "$BACKUP_MANIFEST"
+fi
+c_grn "✓ banco: $(du -h "$DB_BACKUP_PATH" | awk '{print $1}') (conferido)"
 
 step "Snapshot das sessões do WhatsApp → $BACKUP_DIR/waha-$ts.tgz"
 vol="$(volume_waha_data)"
@@ -69,9 +75,23 @@ if [ "${SINGLE_SERVER:-0}" = "1" ]; then
   c_grn "✓ anexos: $(du -h "$BACKUP_DIR/storage-$ts.tgz" | awk '{print $1}')"
 fi
 
-# Retenção: mantém os 14 mais recentes de cada tipo.
-step "Limpando backups antigos (mantém 14)"
-(ls -1t "$BACKUP_DIR"/db-*.sql.gz 2>/dev/null || true) | tail -n +15 | xargs -r rm -f 2>/dev/null || true
-(ls -1t "$BACKUP_DIR"/waha-*.tgz 2>/dev/null || true) | tail -n +15 | xargs -r rm -f 2>/dev/null || true
-(ls -1t "$BACKUP_DIR"/storage-*.tgz 2>/dev/null || true) | tail -n +15 | xargs -r rm -f 2>/dev/null || true
+# Retenção: nunca apaga artefato com menos de 72h e mantém no mínimo
+# os 14 mais recentes de cada tipo. Isso evita que várias atualizações no
+# mesmo dia expulsem um backup ainda dentro da janela de rollback.
+limpar_tipo() {
+  local padrao="$1" f i=0 agora mtime idade
+  agora="$(date +%s)"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    i=$((i + 1))
+    [ "$i" -le 14 ] && continue
+    mtime="$(stat -c %Y "$f" 2>/dev/null || echo "$agora")"
+    idade=$((agora - mtime))
+    [ "$idade" -lt 259200 ] || rm -f -- "$f"
+  done < <(ls -1t $padrao 2>/dev/null || true)
+}
+step "Limpando backups antigos (retenção mínima 72h; mantém pelo menos 14)"
+limpar_tipo "$BACKUP_DIR/db-*.sql.gz"
+limpar_tipo "$BACKUP_DIR/waha-*.tgz"
+limpar_tipo "$BACKUP_DIR/storage-*.tgz"
 c_grn "✓ backup concluído em $BACKUP_DIR"

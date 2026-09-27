@@ -349,6 +349,7 @@ export RODADA_DO_BANCO_ARQUIVO="${TMPDIR:-/tmp}/deskcomm-rodada-do-banco.$$"
 rm -f "$RODADA_DO_BANCO_ARQUIVO" 2>/dev/null || true
 set +e
 DESKCOMM_AGENT_REPORT=1 \
+DESKCOMM_UPDATE_LOCK_FD=9 \
 DESKCOMM_AGENT_PREV_IMAGE="$PREV_IMAGE" \
 DESKCOMM_AGENT_REPORT_CMD="$(declare -f post report log_err); report" \
   bash "$(dirname "$0")/update.sh" "${UPDATE_ARGS[@]+"${UPDATE_ARGS[@]}"}" >"$LOG" 2>&1
@@ -363,6 +364,13 @@ if [ $RC -eq "$REFUSED_RC" ]; then
   # container e reescrever o .env aqui seria inventar um estrago — e reportar
   # "voltei para a versão anterior" seria a mentira que esta feature passou uma
   # onda inteira consertando. O motivo em português já está no log.
+  STATUS="failed"
+elif [ $RC -eq "$UPDATE_ROLLED_BACK_RC" ]; then
+  STATUS="failed_rolled_back"
+elif [ $RC -eq "$UPDATE_ROLLBACK_FAILED_RC" ]; then
+  # update.sh deixou manutenção ativa de propósito. Não tente subir imagens por
+  # fora: isso desfaria o fail-closed justamente quando banco/código podem estar
+  # incoerentes.
   STATUS="failed"
 elif [ $RC -ne 0 ]; then
   STATUS="failed"

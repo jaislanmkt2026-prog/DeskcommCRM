@@ -21,6 +21,20 @@ source "$KIT_DIR/_common.sh"
 source "$KIT_DIR/manutencao.sh"
 enter_project
 
+# Uma atualização por instalação. O agent.sh já entra aqui segurando o FD 9;
+# nesse caso reutilizamos a MESMA descrição de arquivo herdada pelo processo
+# filho. A invocação manual abre e trava o mesmo arquivo. Reabrir o lock no
+# filho do agent criaria uma segunda descrição de arquivo e ele bloquearia a si
+# próprio enquanto o processo pai continuasse segurando a primeira.
+if [ "${DESKCOMM_UPDATE_LOCK_FD:-}" = "9" ]; then
+  flock -n 9 || die "A trava herdada da atualização não está válida. Atualização interrompida."
+else
+  exec 9>"${PROJECT_DIR}/.update.lock"
+  flock -n 9 || die "Já existe uma atualização em andamento nesta instalação. Tente novamente quando ela terminar."
+  DESKCOMM_UPDATE_LOCK_FD=9
+  export DESKCOMM_UPDATE_LOCK_FD
+fi
+
 FORCE=""; SKIP_BACKUP=""; TARGET_TAG=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -177,10 +191,117 @@ else
 fi
 
 # ── 2. Backup de segurança ANTES de tocar no banco ───────────────────────────
+# Estado anterior da rodada. Tudo depois deste ponto deve poder voltar sem
+# adivinhar qual commit/config estava em uso.
+PRE_UPDATE_GIT_SHA="$(git rev-parse HEAD)"
+UPDATE_STATE_DIR="${TMPDIR:-/tmp}/deskcomm-update-$$"
+mkdir -p "$UPDATE_STATE_DIR"
+BACKUP_MANIFEST="$UPDATE_STATE_DIR/db-backup-path"
+PRE_UPDATE_ENV_SNAPSHOT="$UPDATE_STATE_DIR/env.before"
+[ ! -f .env ] || cp -p .env "$PRE_UPDATE_ENV_SNAPSHOT"
+BACKUP_DB_PATH=""
+PRE_UPDATE_EXTENSIONS=""
+CODIGO_TROCADO=""
+BANCO_PODE_TER_MUDADO=""
+UPDATE_ENTROU_MANUTENCAO=""
+ROLLBACK_FALHOU=""
+
+finalizar_update_supervisionado() {
+  local rc=$? rollback_ok=1
+  trap - EXIT INT TERM HUP
+
+  if [ "$rc" -ne 0 ] && { [ -n "${CODIGO_TROCADO:-}" ] || [ -n "${BANCO_PODE_TER_MUDADO:-}" ] || [ -n "${UPDATE_ENTROU_MANUTENCAO:-}" ]; }; then
+    c_ylw "Falha detectada: restaurando o estado anterior desta atualização..."
+
+    if [ -n "${BANCO_PODE_TER_MUDADO:-}" ]; then
+      if [ -n "${BACKUP_DB_PATH:-}" ] && [ -f "$BACKUP_DB_PATH" ]; then
+        if DESKCOMM_PRE_UPDATE_EXTENSIONS="$PRE_UPDATE_EXTENSIONS" \
+             bash "$KIT_DIR/restore.sh" --yes --db-only "$BACKUP_DB_PATH"; then
+          c_grn "✓ banco restaurado pelo backup desta rodada"
+          BANCO_PODE_TER_MUDADO=""
+        else
+          rollback_ok=0
+          c_red "✖ o restore automático do banco falhou"
+        fi
+      else
+        rollback_ok=0
+        c_red "✖ o banco pode ter mudado, mas não há backup validado desta rodada"
+      fi
+    fi
+
+    if [ -n "${CODIGO_TROCADO:-}" ]; then
+      if git checkout --quiet "$PRE_UPDATE_GIT_SHA"; then
+        CODIGO_TROCADO=""
+        c_grn "✓ código voltou para $PRE_UPDATE_GIT_SHA"
+      else
+        rollback_ok=0
+        c_red "✖ não consegui devolver o código para $PRE_UPDATE_GIT_SHA"
+      fi
+    fi
+
+    if [ -f "$PRE_UPDATE_ENV_SNAPSHOT" ]; then
+      cp -p "$PRE_UPDATE_ENV_SNAPSHOT" .env || rollback_ok=0
+      unset APP_IMAGE WORKER_IMAGE SCHEDULER_IMAGE VOICE_AGENT_IMAGE || true
+    fi
+
+    if [ "$rollback_ok" -eq 1 ]; then
+      REGRAS_FALTANDO=""
+      # Código, banco e .env só contam como rollback completo depois que a
+      # versão antiga volta a responder saudável. `restaurar_servicos` usa o
+      # .env já restaurado, então também devolve as imagens coerentes.
+      [ -z "${UPDATE_ENTROU_MANUTENCAO:-}" ] || restaurar_servicos
+      if wait_app_healthy 20 3 >/dev/null; then
+        UPDATE_ENTROU_MANUTENCAO=""
+        rc="$UPDATE_ROLLED_BACK_RC"
+        c_grn "✓ rollback supervisionado concluído; estado anterior saudável"
+      else
+        rollback_ok=0
+        c_red "✖ o estado anterior foi restaurado, mas o healthcheck não ficou saudável"
+      fi
+    fi
+
+    if [ "$rollback_ok" -ne 1 ]; then
+      REGRAS_FALTANDO="rollback_falhou"
+      ROLLBACK_FALHOU=1
+      rc="$UPDATE_ROLLBACK_FAILED_RC"
+      c_red "✖ ROLLBACK INCOMPLETO — o CRM ficará parado para não operar em estado inconsistente"
+      # O aviso pode ter sido removido antes do healthcheck final. Fail-closed
+      # aqui significa efeito concreto: derruba as três peças de aplicação e
+      # recoloca a página de manutenção. `restaurar_servicos` religa apenas as
+      # peças do banco e, com REGRAS_FALTANDO preenchido, não sobe o CRM.
+      dc stop app worker scheduler >/dev/null 2>&1 || true
+      manutencao_sobe || true
+    fi
+  fi
+
+  rm -rf "$UPDATE_STATE_DIR" 2>/dev/null || true
+  if [ -n "${UPDATE_ENTROU_MANUTENCAO:-}" ]; then
+    restaurar_servicos
+  fi
+  exit "$rc"
+}
+trap finalizar_update_supervisionado EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+# Preflight real: árvore local suja nunca entra em atualização automática.
+# `.update.lock` é criado por ESTE processo antes da leitura; excluí-lo evita
+# que o próprio cadeado faça uma árvore limpa parecer suja. Todo outro tracked
+# ou untracked continua entrando no porcelain.
+if [ -n "$(git status --porcelain --untracked-files=all -- . ':(exclude).update.lock')" ]; then
+  die "Há mudanças locais no repositório. Atualização abortada antes do backup e de qualquer mutação."
+fi
+
 if [ -z "$SKIP_BACKUP" ]; then
   step "Backup de segurança (antes de mexer no banco)"
-  if bash "$KIT_DIR/backup.sh"; then
-    c_grn "✓ backup feito — se algo der errado, dá pra restaurar (restore.sh)."
+  if DESKCOMM_BACKUP_MANIFEST="$BACKUP_MANIFEST" bash "$KIT_DIR/backup.sh"; then
+    BACKUP_DB_PATH="$(head -n 1 "$BACKUP_MANIFEST" 2>/dev/null || true)"
+    [ -n "$BACKUP_DB_PATH" ] && [ -f "$BACKUP_DB_PATH" ] || die "O backup terminou sem informar um dump de banco validado. Atualização interrompida."
+    if ! PRE_UPDATE_EXTENSIONS="$(pg_container postgres:17-alpine psql "$(url_do_schema)" -Atc \
+      "select extname from pg_extension where extname in ('vector','citext','pg_trgm','pgcrypto') order by extname")"; then
+      die "Não consegui registrar as extensões atuais do PostgreSQL. Atualização interrompida antes de qualquer mutação."
+    fi
+    c_grn "✓ backup feito e vinculado a esta rodada — rollback automático disponível."
   else
     if [ -n "${DESKCOMM_AGENT_REPORT:-}" ] || [ ! -t 0 ]; then
       die "O backup preventivo falhou. Atualização automática interrompida para proteger os dados."
@@ -190,6 +311,11 @@ if [ -z "$SKIP_BACKUP" ]; then
     read -r -p "Deseja continuar MESMO SEM BACKUP? Digite 'CONTINUAR': " conf
     [ "$conf" = "CONTINUAR" ] || die "Atualização cancelada pelo operador para investigar a falha do backup."
   fi
+else
+  c_ylw "⚠ --skip-backup ativo: se o banco mudar e uma etapa posterior falhar, o banco não poderá voltar automaticamente."
+  if [ -n "${DESKCOMM_AGENT_REPORT:-}" ]; then
+    die "--skip-backup não é permitido em atualização automática. Rode sem essa flag para manter rollback automático."
+  fi
 fi
 # Avisa o agente do host (se for ele quem está dirigindo) — é o que faz a tela
 # de atualização avançar passo a passo enquanto o app ainda está de pé.
@@ -197,6 +323,9 @@ fi
 
 # ── 3. Código novo ───────────────────────────────────────────────────────────
 step "Baixando o código novo"
+# A partir daqui o checkout pode tocar o worktree. Marcar ANTES da chamada faz
+# o trap tentar voltar ao SHA anterior até no caso raro de erro parcial de I/O.
+CODIGO_TROCADO=1
 if ! git checkout --quiet "$TARGET_TAG" 2>&1; then
   die "Não consegui trocar para a versão $TARGET_TAG (parece haver mudanças locais que divergem).
      Rode 'git status' pra ver, ou peça ajuda. NÃO mexi no banco — está tudo como estava."
@@ -265,7 +394,7 @@ fi
 # EXIT nao basta: interrupcao (Ctrl+C, cron matando a rodada, reinicio da
 # maquina) nao passa por ele em todos os casos — e o desfecho seria a
 # instalacao com as pecas do banco paradas, que foi o que se mediu.
-trap restaurar_servicos EXIT INT TERM HUP
+UPDATE_ENTROU_MANUTENCAO=1
 
 step "Atualizando o banco de dados"
 # O que sobrou de errado no banco, para ser repetido no FIM da execução.
@@ -303,6 +432,10 @@ if [ -f supabase/baseline.sql ]; then
   # veria o erro do navegador, que e o desfecho que esta onda existe para tirar.
   manutencao_sobe
   pausar_o_que_fala_com_o_banco
+  # A primeira instrução abaixo já pode criar extensões. A partir daqui o
+  # rollback precisa considerar o banco tocado, mesmo se o baseline nem chegar
+  # a iniciar.
+  BANCO_PODE_TER_MUDADO=1
   # Extensões que o schema exige (idempotente; iguais ao install.sh).
   pg_container postgres:17-alpine psql "$(url_do_schema)" -c \
     "create extension if not exists vector with schema public; create extension if not exists citext with schema public; create extension if not exists pg_trgm with schema public;" \
@@ -703,9 +836,8 @@ AVISO
 else
   c_ylw "⚠ Atualizei, mas o app não respondeu 'ok'. Veja os logs:"
   c_ylw "  docker compose $(dc_files) logs --tail=50 app"
-  # Código de saída != 0: é o que o agent.sh usa pra saber que precisa voltar
-  # pra imagem anterior (guardada por ele ANTES do pull). Sem isso, não existe
-  # rede de proteção — o app novo, quebrado, ficaria no ar sem ninguém saber.
+  # Código de saída != 0 aciona o trap supervisionado: banco, código e .env
+  # voltam juntos; se qualquer etapa falhar, a instalação fica em manutenção.
   exit 1
 fi
 

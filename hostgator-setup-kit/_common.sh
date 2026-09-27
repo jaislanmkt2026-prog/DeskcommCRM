@@ -818,6 +818,13 @@ wait_app_healthy() {
 # atualização que nunca começou: reiniciar o container e reescrever o .env
 # "voltando" de uma mudança que não houve é estrago inventado do nada.
 REFUSED_RC=3
+# Desfechos reservados do rollback supervisionado do update.sh. O agent.sh
+# precisa distingui-los de uma falha antiga/genérica para não tentar um segundo
+# rollback por cima de um rollback já concluído — e, principalmente, para não
+# religar a instalação quando o rollback falhou e o update.sh deixou manutenção
+# ativa de propósito.
+UPDATE_ROLLED_BACK_RC=70
+UPDATE_ROLLBACK_FAILED_RC=71
 refuse() { c_red "✖ $*"; exit "$REFUSED_RC"; }
 
 # Instalar <ref> seria voltar no tempo? 0 = sim (já está contido no HEAD),
@@ -1652,16 +1659,21 @@ trocar_segredo_do_cron_vazado() {
   # mesmo tempo (update.sh no terminal e agent.sh no cron).
   local tem_cadeado=""
   if command -v flock >/dev/null 2>&1; then
-    exec 8>"${dir}/.update.lock"
-    flock -n 8 || { exec 8>&-; return 0; }
-    tem_cadeado=1
+    if [ "${DESKCOMM_UPDATE_LOCK_FD:-}" = "9" ]; then
+      flock -n 9 || return 0
+      tem_cadeado=9
+    else
+      exec 8>"${dir}/.update.lock"
+      flock -n 8 || { exec 8>&-; return 0; }
+      tem_cadeado=8
+    fi
   fi
-  if [ -e "$marca" ]; then [ -n "$tem_cadeado" ] && exec 8>&-; return 0; fi
+  if [ -e "$marca" ]; then [ "$tem_cadeado" = 8 ] && exec 8>&-; return 0; fi
 
   local velho="${!chave}" novo=""
   novo="$(openssl rand -hex 32 2>/dev/null)" || novo=""
   if [ -z "$novo" ]; then
-    [ -n "$tem_cadeado" ] && exec 8>&-
+    [ "$tem_cadeado" = 8 ] && exec 8>&-
     c_ylw "$(t "⚠ não consegui gerar a senha nova das rotinas — tento de novo na próxima atualização.")"
     return 1
   fi
@@ -1673,7 +1685,7 @@ trocar_segredo_do_cron_vazado() {
     set_env_var "$envfile" "$chave" "$velho"
     export "${chave}=${velho}"
     dc up -d >/dev/null 2>&1 || true
-    [ -n "$tem_cadeado" ] && exec 8>&-
+    [ "$tem_cadeado" = 8 ] && exec 8>&-
     c_ylw "$(t "⚠ não consegui reiniciar o app com a senha nova — mantive a antiga e tento de novo na próxima atualização.")"
     return 1
   fi
@@ -1681,7 +1693,7 @@ trocar_segredo_do_cron_vazado() {
     || c_ylw "$(t "⚠ o app ainda não respondeu depois da troca — a senha nova já está no .env e segue valendo.")"
   gravar_cabecalho_do_cron "${dir}/.env.cron-drain" "$novo" || true
   : > "$marca" 2>/dev/null || true
-  [ -n "$tem_cadeado" ] && exec 8>&-
+  [ "$tem_cadeado" = 8 ] && exec 8>&-
   SEGREDO_DO_CRON_TROCADO=1
 
   c_grn "$(t "✓ senha interna das rotinas trocada — a que ficou gravada no log do sistema não abre mais nada")"
