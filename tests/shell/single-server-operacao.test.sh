@@ -19,6 +19,21 @@ KIT_DIR="$ROOT/hostgator-setup-kit"
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
 DOCKER_REAL="$(command -v docker || true)"
+case "$DOCKER_REAL" in
+  */node_modules/.bin/docker) DOCKER_REAL="" ;;
+esac
+DOCKER_COMPOSE_VERSION="$("$DOCKER_REAL" compose version 2>&1 || true)"
+if { [ -z "$DOCKER_REAL" ] || ! grep -qF 'Docker Compose version' <<<"$DOCKER_COMPOSE_VERSION"; } \
+  && command -v cmd.exe >/dev/null 2>&1 \
+  && env -i PATH="$PATH" HOME="$HOME" cmd.exe /d /s /c docker compose version >/dev/null 2>&1; then
+  rm -rf "$WORK"
+  WINDOWS_TEMP="$(cmd.exe /d /s /c echo %TEMP% 2>/dev/null | tr -d "\r")"
+  WORK_PARENT="$(wslpath -u "$WINDOWS_TEMP")"
+  WORK="$(cd "$(mktemp -d -p "$WORK_PARENT")" && pwd -P)"
+  DOCKER_REAL="$WORK/docker-real"
+  printf '%s\n' '#!/usr/bin/env bash' 'COMPOSE_PATH_SEPARATOR=: WSLENV=COMPOSE_PATH_SEPARATOR exec cmd.exe /d /s /c docker "$@"' > "$DOCKER_REAL"
+  chmod +x "$DOCKER_REAL"
+fi
 
 FAILS=0
 check() {  # check <descrição> <comando...>

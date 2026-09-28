@@ -36,6 +36,21 @@ if ! command -v vitest >/dev/null 2>&1; then
   echo "      Você chamou: $0 $*" >&2
   exit 1
 fi
+
+# No Windows, o script roda pelo bash do WSL. Se a integração do Docker Desktop
+# com a distro estiver desligada, o docker.exe aparece no PATH mas recusa a
+# chamada. O mesmo WSL também usaria Node Linux contra node_modules instalado no
+# Windows. Nesses dois casos, atravesse o cmd.exe e use os binários Windows já
+# instalados, sem mudar dependências nem exigir configuração global da máquina.
+WSL_WINDOWS_BRIDGE=0
+if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null && command -v cmd.exe >/dev/null 2>&1; then
+  if ! docker version >/dev/null 2>&1 && cmd.exe /d /s /c docker version >/dev/null 2>&1; then
+    docker() { cmd.exe /d /s /c docker "$@"; }
+  fi
+  if [ -f "$ROOT/node_modules/.bin/vitest.CMD" ]; then
+    WSL_WINDOWS_BRIDGE=1
+  fi
+fi
 BASELINE="$ROOT/supabase/baseline.sql"
 # A PORTA: quem PEDE escolhe; quem não pede deixa o Docker escolher.
 #
@@ -488,9 +503,14 @@ echo "==> invariantes: vitest (tests/invariants) — banco novo por ARQUIVO, ord
 # `--sequence.shuffle.files`: com o isolamento por arquivo a ordem deixa de ser
 # variável escondida, e sortear é o que impede a próxima colisão de fixture de
 # ficar dormente até alguém renomear um arquivo.
-TEST_DB_CONTAINER="$CONTAINER" TEST_DB_TEMPLATE="$TEMPLATE" TEST_DB_PORT="$PORT" \
-  TEST_DB_TEMPLATE_UMA_APLICACAO="$TEMPLATE_UMA_APLICACAO" \
+export TEST_DB_CONTAINER="$CONTAINER" TEST_DB_TEMPLATE="$TEMPLATE" TEST_DB_PORT="$PORT"
+export TEST_DB_TEMPLATE_UMA_APLICACAO="$TEMPLATE_UMA_APLICACAO"
+if [ "$WSL_WINDOWS_BRIDGE" = 1 ]; then
+  WSLENV="${WSLENV:+$WSLENV:}TEST_DB_CONTAINER:TEST_DB_TEMPLATE:TEST_DB_PORT:TEST_DB_TEMPLATE_UMA_APLICACAO" \
+    cmd.exe /d /s /c node node_modules/vitest/vitest.mjs run --config vitest.db.config.ts --sequence.shuffle.files=true "$@"
+else
   vitest run --config vitest.db.config.ts --sequence.shuffle.files=true "$@"
+fi
 
 # A RECUSA. Vem depois do vitest e ANTES da palavra "verde", porque o que se
 # recusa aqui é o próprio resultado — inclusive um resultado que passou.
