@@ -356,6 +356,77 @@ class ConsultaPg<T> implements PromiseLike<RespostaFalsa<T[]>> {
   }
 }
 
+
+class UpsertPg implements PromiseLike<RespostaFalsa<null>> {
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly tabela: string,
+    private readonly linha: Record<string, unknown>,
+    private readonly onConflict: string,
+  ) {}
+
+  private montar(): { texto: string; valores: unknown[] } {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(this.onConflict)) {
+      return naoImplementado(`upsert(onConflict=${JSON.stringify(this.onConflict)})`);
+    }
+    const chaves = Object.keys(this.linha);
+    const valores = chaves.map((k) => {
+      const v = this.linha[k];
+      return v !== null && typeof v === "object" && !Array.isArray(v) ? JSON.stringify(v) : v;
+    });
+    const marcas = chaves.map((_, i) => `$${i + 1}`).join(", ");
+    const atualizaveis = chaves.filter((k) => k !== this.onConflict);
+    if (atualizaveis.length === 0) return naoImplementado("upsert sem coluna para atualizar");
+    return {
+      texto:
+        `insert into public."${this.tabela}" (${chaves.map((k) => `"${k}"`).join(", ")}) values (${marcas}) ` +
+        `on conflict ("${this.onConflict}") do update set ` +
+        atualizaveis.map((k) => `"${k}" = excluded."${k}"`).join(", "),
+      valores,
+    };
+  }
+
+  then<R1 = RespostaFalsa<null>, R2 = never>(
+    aoResolver?: ((v: RespostaFalsa<null>) => R1 | PromiseLike<R1>) | null,
+    aoRejeitar?: ((r: unknown) => R2 | PromiseLike<R2>) | null,
+  ): PromiseLike<R1 | R2> {
+    const { texto, valores } = this.montar();
+    return this.pool
+      .query(texto, valores)
+      .then(() => ({ data: null, error: null }) as RespostaFalsa<null>)
+      .catch((e: unknown) => ({ data: null, error: erroDe(e) }) as RespostaFalsa<null>)
+      .then(aoResolver, aoRejeitar);
+  }
+}
+
+class DeletePg implements PromiseLike<RespostaFalsa<null>> {
+  private filtro: [string, unknown] | null = null;
+
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly tabela: string,
+  ) {}
+
+  eq(coluna: string, valor: unknown): this {
+    if (this.filtro) return naoImplementado("delete com mais de um filtro");
+    this.filtro = [coluna, valor];
+    return this;
+  }
+
+  then<R1 = RespostaFalsa<null>, R2 = never>(
+    aoResolver?: ((v: RespostaFalsa<null>) => R1 | PromiseLike<R1>) | null,
+    aoRejeitar?: ((r: unknown) => R2 | PromiseLike<R2>) | null,
+  ): PromiseLike<R1 | R2> {
+    if (!this.filtro) return Promise.reject(naoImplementado("delete sem filtro")).then(aoResolver, aoRejeitar);
+    const [coluna, valor] = this.filtro;
+    return this.pool
+      .query(`delete from public."${this.tabela}" where "${coluna}" = $1`, [valor])
+      .then(() => ({ data: null, error: null }) as RespostaFalsa<null>)
+      .catch((e: unknown) => ({ data: null, error: erroDe(e) }) as RespostaFalsa<null>)
+      .then(aoResolver, aoRejeitar);
+  }
+}
+
 class InsercaoPg<T> implements PromiseLike<RespostaFalsa<null>> {
   private colunasDeVolta: string | null = null;
 
@@ -578,8 +649,11 @@ export function pgComoSupabase(pool: pg.Pool): SupabaseClient {
         select: (colunas = "*") => new ConsultaPg(pool, tabela, colunas),
         insert: (linha: Record<string, unknown>) => new InsercaoPg(pool, tabela, linha),
         update: (patch: Record<string, unknown>) => new AtualizacaoPg(pool, tabela, patch),
-        delete: () => naoImplementado("delete"),
-        upsert: () => naoImplementado("upsert"),
+        delete: () => new DeletePg(pool, tabela),
+        upsert: (linha: Record<string, unknown>, opts?: { onConflict?: string }) => {
+          if (!opts?.onConflict) return naoImplementado("upsert sem onConflict");
+          return new UpsertPg(pool, tabela, linha, opts.onConflict);
+        },
       };
     },
     rpc: (nome: string, args: Record<string, unknown> = {}) => chamarRpc(pool, nome, args),

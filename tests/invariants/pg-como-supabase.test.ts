@@ -360,9 +360,47 @@ describe("o adaptador FILTRA POR CONJUNTO — `in`", () => {
   });
 });
 
+describe("UPSERT e DELETE — formas mínimas usadas pela configuração da instalação", () => {
+  it("upsert insere e a mesma chave atualiza", async () => {
+    const chave = "TESTE_ADAPTADOR_UPSERT";
+    await pool.query("delete from platform_config where chave = $1", [chave]);
+
+    const primeiro = await db.from("platform_config").upsert(
+      { chave, valor: "um", eh_segredo: false, semeado_do_env: false },
+      { onConflict: "chave" },
+    );
+    expect(primeiro.error).toBeNull();
+
+    const segundo = await db.from("platform_config").upsert(
+      { chave, valor: "dois", eh_segredo: false, semeado_do_env: false },
+      { onConflict: "chave" },
+    );
+    expect(segundo.error).toBeNull();
+    const { rows } = await pool.query<{ valor: string }>("select valor from platform_config where chave = $1", [chave]);
+    expect(rows).toEqual([{ valor: "dois" }]);
+  });
+
+  it("delete().eq() remove só o alvo", async () => {
+    const alvo = "TESTE_ADAPTADOR_DELETE";
+    const vizinho = "TESTE_ADAPTADOR_DELETE_VIZINHO";
+    await pool.query(
+      `insert into platform_config (chave, valor, eh_segredo, semeado_do_env) values
+       ($1, 'alvo', false, false), ($2, 'vizinho', false, false) on conflict (chave) do nothing`,
+      [alvo, vizinho],
+    );
+
+    const { error } = await db.from("platform_config").delete().eq("chave", alvo);
+    expect(error).toBeNull();
+    const { rows } = await pool.query<{ chave: string }>(
+      "select chave from platform_config where chave = any($1) order by chave",
+      [[alvo, vizinho]],
+    );
+    expect(rows.map((x) => x.chave)).toEqual([vizinho]);
+  });
+});
+
 describe("o que NÃO está implementado estoura", () => {
   it("método ausente lança em vez de devolver vazio — vazio silencioso é teste verde medindo nada", () => {
-    expect(() => db.from("crm_pipelines").delete()).toThrow(/não está implementado/);
     expect(() => db.from("crm_pipelines").select("id").neq("id", "x")).toThrow(/não está implementado/);
   });
 });

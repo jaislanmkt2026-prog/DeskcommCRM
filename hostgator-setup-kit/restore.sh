@@ -18,6 +18,15 @@ done
 DUMP="${1:-}"
 [ -n "$DUMP" ] && [ -f "$DUMP" ] || die "Uso: restore.sh [--yes] [--db-only] <arquivo-db-*.sql.gz>"
 [ $# -eq 1 ] || die "Uso: restore.sh [--yes] [--db-only] <arquivo-db-*.sql.gz>"
+BACKUP_DIR="${BACKUP_DIR:-$PROJECT_DIR/backups}"
+[ -d "$BACKUP_DIR" ] || die "Diretório de backups não encontrado. Nada foi restaurado."
+DUMP_REAL="$(readlink -f -- "$DUMP")"
+BACKUP_REAL="$(readlink -f -- "$BACKUP_DIR")"
+case "$DUMP_REAL" in
+  "$BACKUP_REAL"/db-*.sql.gz) ;;
+  *) die "O dump informado está fora do diretório de backups permitido. Nada foi restaurado." ;;
+esac
+DUMP="$DUMP_REAL"
 gzip -t "$DUMP" 2>/dev/null || die "O dump informado está corrompido ou não é um gzip válido. Nada foi restaurado."
 
 c_ylw "⚠ Isto vai SOBRESCREVER o banco em $NEXT_PUBLIC_SUPABASE_URL."

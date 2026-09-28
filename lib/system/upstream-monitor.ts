@@ -453,8 +453,8 @@ function regraDoArquivo(path: string): { area: string; risk: NivelRisco; reason:
     return { area: "MCP / Tools", risk: "critical", reason: "MCP/tools" };
   }
   if (p.includes("inbox")) return { area: "Inbox", risk: "high", reason: "Inbox" };
-  if (p.includes("whatsapp") || p.includes("waha")) {
-    return { area: "WhatsApp / WAHA", risk: "high", reason: "WhatsApp/WAHA" };
+  if (p.startsWith("lib/channels/") || p.includes("/channel-") || p.includes("/channels/") || p.includes("/webhooks/")) {
+    return { area: "Canais", risk: "high", reason: "canal/transporte" };
   }
   if (p.startsWith("worker/") || p.startsWith("workers/")) {
     return { area: "Workers", risk: "high", reason: "worker" };

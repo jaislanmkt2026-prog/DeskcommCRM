@@ -168,6 +168,39 @@ check "restore.sh comum termina bem" test "$rc" -eq 0
 [ "$rc" -eq 0 ] || sed 's/^/    | /' "$WORK/rs-comum.out"
 check "restore.sh comum não mexe em Storage local" nao_contem "$LOG" 'volumes/storage'
 
+# Restore só aceita o artefato gerado na pasta oficial de backups. Um gzip
+# válido fora dela (inclusive via ../) não pode chegar ao banco.
+printf 'x' | gzip > "$APROJ/../db-20260922-040000.sql.gz"
+(cd "$APROJ" && bash "$KIT_DIR/restore.sh" --yes ../db-20260922-040000.sql.gz) > "$WORK/rs-traversal.out" 2>&1; rc=$?
+check "restore.sh recusa path traversal para fora de backups" test "$rc" -ne 0
+check "e explica que o dump está fora do diretório permitido" contem "$WORK/rs-traversal.out" "fora do diretório de backups permitido"
+
+# Um symlink dentro de backups apontando para fora também precisa ser recusado
+# depois da resolução do caminho real.
+MSYS=winsymlinks:sys ln -s "$APROJ/../db-20260922-040000.sql.gz" "$APROJ/backups/db-20260922-050000.sql.gz"
+check "fixture de symlink externo é um link real" test -L "$APROJ/backups/db-20260922-050000.sql.gz"
+(cd "$APROJ" && bash "$KIT_DIR/restore.sh" --yes backups/db-20260922-050000.sql.gz) > "$WORK/rs-symlink.out" 2>&1; rc=$?
+check "restore.sh recusa symlink que resolve para fora de backups" test "$rc" -ne 0
+check "e o symlink externo não chega ao banco" contem "$WORK/rs-symlink.out" "fora do diretório de backups permitido"
+rm -f "$APROJ/backups/db-20260922-050000.sql.gz"
+
+# Mesmo dentro da pasta permitida, um arquivo com nome válido mas gzip inválido
+# deve parar antes do restore.
+printf 'nao-e-gzip' > "$APROJ/backups/db-20260922-060000.sql.gz"
+(cd "$APROJ" && bash "$KIT_DIR/restore.sh" --yes backups/db-20260922-060000.sql.gz) > "$WORK/rs-corrompido.out" 2>&1; rc=$?
+check "restore.sh recusa dump corrompido dentro de backups" test "$rc" -ne 0
+check "e explica que o gzip é inválido" contem "$WORK/rs-corrompido.out" "corrompido ou não é um gzip válido"
+rm -f "$APROJ/backups/db-20260922-060000.sql.gz"
+
+# BACKUP_DIR pode apontar para outra pasta explícita; um dump válido dessa pasta
+# continua permitido e restaurável.
+CUSTOM_BACKUP="$WORK/backups-custom"
+mkdir -p "$CUSTOM_BACKUP"
+printf 'x' | gzip > "$CUSTOM_BACKUP/db-20260922-070000.sql.gz"
+(cd "$APROJ" && BACKUP_DIR="$CUSTOM_BACKUP" printf 'RESTAURAR\n' | BACKUP_DIR="$CUSTOM_BACKUP" bash "$KIT_DIR/restore.sh" "$CUSTOM_BACKUP/db-20260922-070000.sql.gz") > "$WORK/rs-custom.out" 2>&1; rc=$?
+check "restore.sh aceita dump válido do BACKUP_DIR customizado" test "$rc" -eq 0
+[ "$rc" -eq 0 ] || sed 's/^/    | /' "$WORK/rs-custom.out"
+
 # ════════════════════════════════════════════════════════════════════════════
 echo "(a) nome do projeto e dono:"
 check "o Supabase leva o nome do projeto do CRM" \
