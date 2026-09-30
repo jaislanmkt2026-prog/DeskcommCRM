@@ -499,6 +499,156 @@ beforeAll(() => {
             (organization_id, campaign_id, channel_session_id)
             values (v_org, v_camp, v_sess);
         end if;
+
+        -- ─── módulo imobiliário (migrations 0433-0436) ────────────────────
+        -- 14 tabelas tenant-aware com RLS via fn_user_org_ids(). Seed cria
+        -- uma linha por org para controle positivo (ownRows >= 1).
+        declare
+          v_constructor uuid;
+          v_development uuid;
+          v_unit uuid;
+          v_owner uuid;
+          v_third_party uuid;
+          v_negotiation uuid;
+          v_proposal uuid;
+          v_reservation uuid;
+          v_price_list uuid;
+        begin
+          -- 0433: constructors
+          select id into v_constructor from public.constructors
+            where organization_id = v_org limit 1;
+          if v_constructor is null then
+            insert into public.constructors (organization_id, nome, tipo_integracao, ativo)
+              values (v_org, 'RLS Invariant Construtora', 'manual', true)
+              returning id into v_constructor;
+          end if;
+
+          -- 0433: real_estate_developments
+          select id into v_development from public.real_estate_developments
+            where organization_id = v_org limit 1;
+          if v_development is null then
+            insert into public.real_estate_developments
+              (organization_id, constructor_id, nome, status)
+              values (v_org, v_constructor, 'RLS Invariant Empreendimento', 'em_andamento')
+              returning id into v_development;
+          end if;
+
+          -- 0433: real_estate_units
+          select id into v_unit from public.real_estate_units
+            where organization_id = v_org limit 1;
+          if v_unit is null then
+            insert into public.real_estate_units
+              (organization_id, development_id, numero, status)
+              values (v_org, v_development, 'RLS-101', 'disponivel')
+              returning id into v_unit;
+          end if;
+
+          -- 0433: real_estate_history
+          if not exists (select 1 from public.real_estate_history where organization_id = v_org) then
+            insert into public.real_estate_history
+              (organization_id, unit_id, campo, valor_anterior, valor_novo, fonte)
+              values (v_org, v_unit, 'status', 'disponivel', 'reservado', 'rls-invariant');
+          end if;
+
+          -- 0433: owners
+          select id into v_owner from public.owners
+            where organization_id = v_org limit 1;
+          if v_owner is null then
+            insert into public.owners (organization_id, nome)
+              values (v_org, 'RLS Invariant Proprietário')
+              returning id into v_owner;
+          end if;
+
+          -- 0433: third_party_properties
+          select id into v_third_party from public.third_party_properties
+            where organization_id = v_org limit 1;
+          if v_third_party is null then
+            insert into public.third_party_properties
+              (organization_id, owner_id, status_captacao)
+              values (v_org, v_owner, 'novo_contato')
+              returning id into v_third_party;
+          end if;
+
+          -- 0433: documents
+          if not exists (select 1 from public.documents where organization_id = v_org) then
+            insert into public.documents
+              (organization_id, entity_kind, entity_id, tipo, storage_path)
+              values (v_org, 'unit', v_unit, 'pdf', 'rls-invariant/doc.pdf');
+          end if;
+
+          -- 0433: negotiations
+          select id into v_negotiation from public.negotiations
+            where organization_id = v_org limit 1;
+          if v_negotiation is null then
+            insert into public.negotiations
+              (organization_id, contact_id, unidade_id, estagio)
+              values (v_org, v_contact, v_unit, 'interesse')
+              returning id into v_negotiation;
+          end if;
+
+          -- 0434: property_proposals
+          select id into v_proposal from public.property_proposals
+            where organization_id = v_org limit 1;
+          if v_proposal is null then
+            insert into public.property_proposals
+              (organization_id, client_id, unit_id, payment_composition, status)
+              values (v_org, v_contact, v_unit, '{"sinal": 5000}'::jsonb, 'draft')
+              returning id into v_proposal;
+          end if;
+
+          -- 0434: property_reservations
+          select id into v_reservation from public.property_reservations
+            where organization_id = v_org limit 1;
+          if v_reservation is null then
+            insert into public.property_reservations
+              (organization_id, proposal_id, unit_id, signal_amount_cents, expires_at, status)
+              values (v_org, v_proposal, v_unit, 5000, now() + interval '30 days', 'active')
+              returning id into v_reservation;
+          end if;
+
+          -- 0435: property_proposals_history
+          if not exists (select 1 from public.property_proposals_history where organization_id = v_org) then
+            insert into public.property_proposals_history
+              (parent_id, organization_id, operation)
+              values (v_proposal, v_org, 'INSERT');
+          end if;
+
+          -- 0435: property_reservations_history
+          if not exists (select 1 from public.property_reservations_history where organization_id = v_org) then
+            insert into public.property_reservations_history
+              (parent_id, organization_id, operation)
+              values (v_reservation, v_org, 'INSERT');
+          end if;
+
+          -- 0436: real_estate_price_lists
+          select id into v_price_list from public.real_estate_price_lists
+            where organization_id = v_org limit 1;
+          if v_price_list is null then
+            insert into public.real_estate_price_lists
+              (organization_id, constructor_id, development_id, nome, vigencia_inicio, fonte, status)
+              values (v_org, v_constructor, v_development, 'RLS Invariant Tabela',
+                      current_date, 'manual', 'ativa')
+              returning id into v_price_list;
+          end if;
+
+          -- 0436: real_estate_price_list_items
+          if not exists (select 1 from public.real_estate_price_list_items where organization_id = v_org) then
+            insert into public.real_estate_price_list_items
+              (organization_id, price_list_id, unit_id, valor_cents, status)
+              values (v_org, v_price_list, v_unit, 50000000, 'disponivel');
+          end if;
+
+          -- 0429: document_checklist_items. FK direta para contacts + org.
+          -- Seed usa v_contact já criado acima (mesma org). Sem message_id
+          -- (nullable) — prova-se a cerca de organização, não vínculo com mensagem.
+          -- Status 'pendente' satisfaz CHECK da coluna.
+          if not exists (select 1 from public.document_checklist_items where organization_id = v_org) then
+            insert into public.document_checklist_items
+              (organization_id, contact_id, checklist_key, status)
+              values (v_org, v_contact, 'rls_invariant_doc', 'pendente');
+          end if;
+
+                  end;
       end loop;
     end
     $seed$;
@@ -648,6 +798,37 @@ export const TABLES = [
   // entrada abre por `?rascunho=`), então o `agent` semeado aqui é controle
   // positivo legítimo e a policy `for all` cobre também o UPDATE do consumo.
   "conversation_drafts",
+  // migrations 0433-0436 — módulo imobiliário. 14 tabelas tenant-aware com RLS
+  // via fn_user_org_ids(). Vazar qualquer linha entrega ao vizinho o catálogo
+  // de imóveis, propostas, reservas, preços e documentos de outra organização.
+  // A leitura é org-scoped sem gate de papel, então o `agent` semeado serve de
+  // controle positivo legítimo.
+  "constructors",
+  "real_estate_developments",
+  "real_estate_units",
+  "real_estate_history",
+  "owners",
+  "third_party_properties",
+  "documents",
+  "negotiations",
+  "property_proposals",
+  "property_reservations",
+  "property_proposals_history",
+  "property_reservations_history",
+  "real_estate_price_lists",
+  "real_estate_price_list_items",
+  // migration 0429 — checklist documental imobiliário. Vínculo entre itens de
+  // checklist configurável (crm_pipelines.settings) e documentos reais
+  // (messages). Vazar uma linha entrega ao vizinho quais documentos um lead
+  // da outra organização já enviou ou teve recusado. Leitura org-scoped sem
+  // gate de papel; `agent` semeado serve de controle positivo legítimo.
+  "document_checklist_items",
+  // migration 0499 — staging area + reject queue para ingestão CV CRM.
+  // Guarda payload bruto (jsonb) de unidades, empreendimentos e tabelas de preço.
+  // Vazar entre organizações entrega catálogo comercial e preços da concorrência.
+  // migration 0499 — log de batch da ingestão CV CRM. Guarda totais, status e
+  // erros de cada execução. Vazar entre organizações revela volume e falhas do
+  // pipeline do vizinho. Leitura org-scoped sem gate de papel.
 ] as const;
 
 describe("RLS tenant isolation (fn_user_org_ids pattern)", () => {
@@ -670,18 +851,28 @@ describe("RLS tenant isolation (fn_user_org_ids pattern)", () => {
   }
 
   it("ai_reply_drafts: org B lê sua sugestão e não lê a de A (direção inversa)", () => {
-    expect(countAs(USER_B,
-      `select count(*) from public.ai_reply_drafts where organization_id = '${ORG_B}';`,
-    )).toBeGreaterThanOrEqual(1);
-    expect(countAs(USER_B,
-      `select count(*) from public.ai_reply_drafts where organization_id = '${ORG_A}';`,
-    )).toBe(0);
+    expect(
+      countAs(
+        USER_B,
+        `select count(*) from public.ai_reply_drafts where organization_id = '${ORG_B}';`,
+      ),
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      countAs(
+        USER_B,
+        `select count(*) from public.ai_reply_drafts where organization_id = '${ORG_A}';`,
+      ),
+    ).toBe(0);
   });
 
   it("ai_reply_drafts: os dois tenants têm linhas antes de testar as cercas", () => {
-    expect(Number(sql(
-      `select count(distinct organization_id) from public.ai_reply_drafts where organization_id in ('${ORG_A}','${ORG_B}');`,
-    ))).toBe(2);
+    expect(
+      Number(
+        sql(
+          `select count(distinct organization_id) from public.ai_reply_drafts where organization_id in ('${ORG_A}','${ORG_B}');`,
+        ),
+      ),
+    ).toBe(2);
   });
 
   it("superuser sees both orgs (seed sanity: cross-tenant rows really exist)", () => {

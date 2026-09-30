@@ -140,21 +140,26 @@ describe("0150 — o segredo cifrado some da superfície do browser", () => {
   });
 
   it("nem o iv nem o tag saem junto (o trio é o que decifra)", () => {
-    expect(podeLer(GOV_ADMIN, `select api_key_iv from public.ai_provider_credentials;`)).toBe(false);
+    expect(podeLer(GOV_ADMIN, `select api_key_iv from public.ai_provider_credentials;`)).toBe(
+      false,
+    );
     expect(podeLer(GOV_ADMIN, `select api_key_tag from public.ai_provider_credentials;`)).toBe(
       false,
     );
   });
 
   it("CONTROLE POSITIVO: a view segura continua legível (é o que a tela consome)", () => {
-    expect(
-      podeLer(GOV_ADMIN, `select count(*) from public.ai_provider_credentials_safe;`),
-    ).toBe(true);
+    expect(podeLer(GOV_ADMIN, `select count(*) from public.ai_provider_credentials_safe;`)).toBe(
+      true,
+    );
   });
 
   it("CONTROLE POSITIVO: as colunas não-sensíveis continuam legíveis na tabela base", () => {
     expect(
-      podeLer(GOV_ADMIN, `select provider, label, api_key_last4 from public.ai_provider_credentials;`),
+      podeLer(
+        GOV_ADMIN,
+        `select provider, label, api_key_last4 from public.ai_provider_credentials;`,
+      ),
     ).toBe(true);
   });
 
@@ -179,39 +184,90 @@ describe("0150 — o segredo cifrado some da superfície do browser", () => {
  * cima passando.
  */
 const DIVIDA_RBAC_CONHECIDA = new Set([
-  "agent_cases", "agent_inbox_items", "ai_agent_runs",
-  "ai_invocations", "ai_router_decisions",
-  "before_send_traces", "channel_knobs", "channel_session_health", "channel_session_warmup",
-  "contact_field_proposals", "contacts", "crm_lead_reactivations", "crm_lead_risk_states",
-  "crm_lead_scores", "cron_jobs", "demanda_conversas", "demandas",
-  "disclosure_template_pointers", "disclosure_template_versions",
-  "flywheel_distiller_proposals", "flywheel_judge_verdicts", "followup_enrollment_events",
-  "followup_enrollments", "followup_flow_pointers", "followup_flow_versions",
-  "idempotency_keys", "incidents", "job_queue", "judge_alignment_pool", "knowledge_searches",
-  "lead_checkpoints", "lead_notes", "lead_state", "lead_state_transitions", "llm_calls",
-  "meta_templates", "metrics", "nuvemshop_products", "orders", "org_memory_entries",
-  "org_memory_pointers", "org_memory_versions", "organizations", "outbound_copies",
+  "agent_cases",
+  "agent_inbox_items",
+  "ai_agent_runs",
+  "ai_invocations",
+  "ai_router_decisions",
+  "before_send_traces",
+  "channel_knobs",
+  "channel_session_health",
+  "channel_session_warmup",
+  "contact_field_proposals",
+  "contacts",
+  "crm_lead_reactivations",
+  "crm_lead_risk_states",
+  "crm_lead_scores",
+  "cron_jobs",
+  "demanda_conversas",
+  "demandas",
+  "disclosure_template_pointers",
+  "disclosure_template_versions",
+  "flywheel_distiller_proposals",
+  "flywheel_judge_verdicts",
+  "followup_enrollment_events",
+  "followup_enrollments",
+  "followup_flow_pointers",
+  "followup_flow_versions",
+  "idempotency_keys",
+  "incidents",
+  "job_queue",
+  "judge_alignment_pool",
+  "knowledge_searches",
+  "lead_checkpoints",
+  "lead_notes",
+  "lead_state",
+  "lead_state_transitions",
+  "llm_calls",
+  "meta_templates",
+  "metrics",
+  "nuvemshop_products",
+  "orders",
+  "org_memory_entries",
+  "org_memory_pointers",
+  "org_memory_versions",
+  "organizations",
+  "outbound_copies",
   "pacing_ledger",
   // phone_numbers (SIP module, #677): a leitura/escrita e org-scoped, mas o
   // segundo eixo (so agent+ resolve numero, so manager+ configura roteamento)
   // ainda nao tem par de casos provando papel de baixo barrado. Divida
   // herdada de antes desta varredura existir, nao introduzida agora.
-  "phone_numbers", "playbook_pointers", "playbook_versions", "promise_table_pointers",
-  "promise_table_versions", "reentry_knob_pointers", "reentry_knob_versions",
-  "reentry_template_pointers", "reentry_template_versions", "send_ledger",
-  "skill_activations", "skill_pointers", "skill_versions", "storage_redaction_queue",
+  "phone_numbers",
+  "playbook_pointers",
+  "playbook_versions",
+  "promise_table_pointers",
+  "promise_table_versions",
+  "reentry_knob_pointers",
+  "reentry_knob_versions",
+  "reentry_template_pointers",
+  "reentry_template_versions",
+  "send_ledger",
+  "skill_activations",
+  "skill_pointers",
+  "skill_versions",
+  "storage_redaction_queue",
   "user_recovery_codes",
 ]);
 
 describe("0150 — a dívida de RBAC não cresce", () => {
   it("as tabelas já corrigidas têm policy de escrita com fn_role_at_least", () => {
     const corrigidas = [
-      "channel_sessions", "ai_agents", "ai_agent_versions", "ai_budgets",
-      "ai_routers", "ai_router_members", "ai_purpose_bindings", "ai_provider_credentials",
+      "channel_sessions",
+      "ai_agents",
+      "ai_agent_versions",
+      "ai_budgets",
+      "ai_routers",
+      "ai_router_members",
+      "ai_purpose_bindings",
+      "ai_provider_credentials",
       // As quatro do acervo entraram na 0181, pelo mesmo motivo e no mesmo
       // formato: um `viewer` DELETAVA `ai_chunks` da própria organização
       // falando direto com o PostgREST, com o JWT dele.
-      "ai_knowledge_sources", "ai_knowledge_versions", "ai_chunks", "ai_faq_items",
+      "ai_knowledge_sources",
+      "ai_knowledge_versions",
+      "ai_chunks",
+      "ai_faq_items",
     ];
     const semRole = sql(`
       select coalesce(string_agg(distinct tablename, ','), '') from pg_policies
