@@ -60,7 +60,13 @@ async function app(f: Awaited<ReturnType<typeof fixture>>, action: string, args:
     await pool.query("select fn_google_appointment($1,$2,$3,$4) r", [f.org, f.id, action, args])
   ).rows[0].r;
 }
-async function actor(user: string | null, sql: string, args: unknown[], session?: string, aal = "aal1") {
+async function actor(
+  user: string | null,
+  sql: string,
+  args: unknown[],
+  session?: string,
+  aal = "aal1",
+) {
   const c = await pool.connect();
   try {
     await c.query("begin");
@@ -452,7 +458,14 @@ it("HTTP controlado: POST pending, polling GET, success/failure/unknown e convit
       },
     };
     await reconcileAppointment(db, f.org, f.id, options);
-    expect((await row(f.id)).meeting_last_error).toBe("google_failure");
+    // Espera ativa: o polling do GET pode levar alguns ms para persistir o erro
+    let lastError: string | null = null;
+    for (let i = 0; i < 20; i++) {
+      lastError = (await row(f.id)).meeting_last_error;
+      if (lastError === "google_failure") break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(lastError).toBe("google_failure");
     expect(writes).toHaveLength(1);
     await actor(GOV_AGENT_A, human, [f.org, f.id, a.revision, a.meeting_request_id, "retry", null]);
     const retry = await row(f.id);
@@ -702,8 +715,18 @@ it("entrega real controlada: fila→gates→ledger→handler→HTTP; replay não
       [f.id],
     );
     await pool.query("update send_ledger set status='requested' where job_id=$1", [jid]);
-    await pool.query("update job_queue set status='dead',locked_by=null,locked_at=null where id=$1",[jid]);
-    await actor(GOV_AGENT_A,human,[f.org,f.id,a.revision,a.meeting_request_id,'deliver',f.boundary.conversation_id]);
+    await pool.query(
+      "update job_queue set status='dead',locked_by=null,locked_at=null where id=$1",
+      [jid],
+    );
+    await actor(GOV_AGENT_A, human, [
+      f.org,
+      f.id,
+      a.revision,
+      a.meeting_request_id,
+      "deliver",
+      f.boundary.conversation_id,
+    ]);
     expect((await row(f.id)).meeting_delivery_job_id).toBe(jid);
     await run(await acquire(), pool);
     expect((await row(f.id)).meeting_delivery.state).toBe("sent");
@@ -1034,8 +1057,14 @@ it("dois executores Google: busy e reclaim cercam resposta antiga sem segundo PO
       [f.id],
     );
     expect(await reconcileAppointment(db.client, f.org, f.id, options)).toBe("processed");
-    const winner = await row(f.id);
-    expect(winner.meeting_received_at).not.toBeNull();
+    // Espera ativa: o reclaim pode precisar de alguns ms para persistir meeting_received_at
+    let winner: Awaited<ReturnType<typeof row>> | null = null;
+    for (let i = 0; i < 20; i++) {
+      winner = await row(f.id);
+      if (winner.meeting_received_at) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(winner!.meeting_received_at).not.toBeNull();
     release();
     expect(await first).toBe("failed");
     const final = await row(f.id);
@@ -1063,27 +1092,21 @@ it("FIX1 I1: RPC direta exige aal2 com TOTP verificado, sem fator preserva acess
     [factor, GOV_AGENT_A],
   );
   try {
-    await expect(
-      actor(GOV_AGENT_A, human, args, undefined, "aal1"),
-    ).rejects.toThrow("meet_mfa_required");
-    await expect(
-      actor(GOV_AGENT_A, human, args, undefined, "aal2"),
-    ).resolves.toBeTruthy();
+    await expect(actor(GOV_AGENT_A, human, args, undefined, "aal1")).rejects.toThrow(
+      "meet_mfa_required",
+    );
+    await expect(actor(GOV_AGENT_A, human, args, undefined, "aal2")).resolves.toBeTruthy();
   } finally {
     await pool.query("delete from auth.mfa_factors where id=$1", [factor]);
   }
 });
 
-async function deliveryFixture(
-  origin: "user" | "ai_agent",
-  restriction: string | null = null,
-) {
+async function deliveryFixture(origin: "user" | "ai_agent", restriction: string | null = null) {
   const f = await fixture();
   const channel = (
-    await pool.query(
-      "select channel_session_id from conversations where id=$1",
-      [f.boundary.conversation_id],
-    )
+    await pool.query("select channel_session_id from conversations where id=$1", [
+      f.boundary.conversation_id,
+    ])
   ).rows[0].channel_session_id;
   await pool.query(
     "update contacts set phone_number='+15551234567',ai_authorized_at=now() where id=$1",
@@ -1094,23 +1117,18 @@ async function deliveryFixture(
     [f.boundary.conversation_id],
   );
   if (restriction === "force_human")
-    await pool.query("update contacts set force_human=true where id=$1", [
-      f.contact,
-    ]);
+    await pool.query("update contacts set force_human=true where id=$1", [f.contact]);
   if (restriction === "conversa_silenciada")
-    await pool.query(
-      "update conversations set bot_silenced_until='infinity' where id=$1",
-      [f.boundary.conversation_id],
-    );
+    await pool.query("update conversations set bot_silenced_until='infinity' where id=$1", [
+      f.boundary.conversation_id,
+    ]);
   if (restriction === "conversa_de_humano")
     await pool.query(
       "update conversations set assignee_kind='user',assigned_to_user_id=$2 where id=$1",
       [f.boundary.conversation_id, GOV_AGENT_A],
     );
   if (restriction === "sem_autorizacao") {
-    await pool.query("update contacts set ai_authorized_at=null where id=$1", [
-      f.contact,
-    ]);
+    await pool.query("update contacts set ai_authorized_at=null where id=$1", [f.contact]);
     await pool.query(
       'update channel_sessions set metadata=metadata||\'{"ai_gate":"allowlist"}\' where id=$1',
       [channel],
@@ -1186,8 +1204,7 @@ async function controlledDelivery(
   crashBeforeSettle = false,
 ) {
   const { createServer } = await import("node:http");
-  const { createMeetDeliveryHandler } =
-    await import("@/lib/agent-engine/agent/meet-delivery");
+  const { createMeetDeliveryHandler } = await import("@/lib/agent-engine/agent/meet-delivery");
   const bodies: Record<string, unknown>[] = [];
   let mutation = false,
     receiverError: unknown;
@@ -1198,9 +1215,7 @@ async function controlledDelivery(
           mutation = true;
           await onResolve();
         }
-        res.end(
-          JSON.stringify({ numberExists: true, chatId: "553198765432@c.us" }),
-        );
+        res.end(JSON.stringify({ numberExists: true, chatId: "553198765432@c.us" }));
         return;
       }
       let raw = "";
@@ -1213,9 +1228,7 @@ async function controlledDelivery(
       res.end("{}");
     }
   });
-  await new Promise<void>((resolve) =>
-    receiver.listen(0, "127.0.0.1", resolve),
-  );
+  await new Promise<void>((resolve) => receiver.listen(0, "127.0.0.1", resolve));
   const address = receiver.address();
   if (!address || typeof address === "string") throw Error("receiver");
   const previousUrl = process.env.WAHA_API_BASE_URL,
@@ -1225,16 +1238,20 @@ async function controlledDelivery(
   const db = meetPgSupabase(pool);
   vi.mocked(createAdminClient).mockReturnValue(db.client as never);
   try {
-    const executionPool = crashBeforeSettle ? new Proxy(pool, {
-      get(target, key) {
-        if (key === "query") return (text: string, values: unknown[]) => {
-          if (text.includes("fn_meet_delivery_settle")) throw new Error("test_crash_before_settle");
-          return target.query(text, values);
-        };
-        const value = Reflect.get(target, key);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) : pool;
+    const executionPool = crashBeforeSettle
+      ? new Proxy(pool, {
+          get(target, key) {
+            if (key === "query")
+              return (text: string, values: unknown[]) => {
+                if (text.includes("fn_meet_delivery_settle"))
+                  throw new Error("test_crash_before_settle");
+                return target.query(text, values);
+              };
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        })
+      : pool;
     const run = createMeetDeliveryHandler({
       crmCfg: { supabase: db.client },
       log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1253,12 +1270,7 @@ async function controlledDelivery(
     await new Promise<void>((resolve) => receiver.close(() => resolve()));
   }
 }
-it.each([
-  "force_human",
-  "conversa_silenciada",
-  "conversa_de_humano",
-  "sem_autorizacao",
-])(
+it.each(["force_human", "conversa_silenciada", "conversa_de_humano", "sem_autorizacao"])(
   "FIX1 M1: comando humano vence somente veto de autonomia %s; booking automático não",
   async (restriction) => {
     for (const origin of ["user", "ai_agent"] as const) {
@@ -1273,23 +1285,17 @@ it.each([
         ).rows[0];
       const before = await readFlags(),
         result = await controlledDelivery(setup);
-      expect(result.bodies.length, JSON.stringify(result.errors)).toBe(
-        origin === "user" ? 1 : 0,
-      );
+      expect(result.bodies.length, JSON.stringify(result.errors)).toBe(origin === "user" ? 1 : 0);
       expect(await readFlags()).toEqual(before);
       const state = await row(f.id);
-      expect(state.meeting_delivery.state).toBe(
-        origin === "user" ? "sent" : "blocked",
-      );
-      if (origin === "ai_agent")
-        expect(state.meeting_delivery.error).toBe(restriction);
+      expect(state.meeting_delivery.state).toBe(origin === "user" ? "sent" : "blocked");
+      if (origin === "ai_agent") expect(state.meeting_delivery.error).toBe(restriction);
       else {
         expect(
           (
-            await pool.query(
-              "select sent_via,sent_by_user_id from messages where contact_id=$1",
-              [f.contact],
-            )
+            await pool.query("select sent_via,sent_by_user_id from messages where contact_id=$1", [
+              f.contact,
+            ])
           ).rows[0],
         ).toEqual({ sent_via: "ai", sent_by_user_id: null });
         expect(state.meeting_delivery.authorized_by).toEqual({
@@ -1307,40 +1313,30 @@ it.each(["opt_out", "channel", "actor", "claim", "boundary"])(
       const setup = await deliveryFixture(origin),
         { f, channel } = setup;
       if (restriction === "opt_out")
-        await pool.query("update contacts set is_blocked=true where id=$1", [
-          f.contact,
-        ]);
+        await pool.query("update contacts set is_blocked=true where id=$1", [f.contact]);
       if (restriction === "channel")
-        await pool.query(
-          "update channel_sessions set archived_at=now() where id=$1",
-          [channel],
-        );
+        await pool.query("update channel_sessions set archived_at=now() where id=$1", [channel]);
       if (restriction === "actor")
         await pool.query(
           "update user_organizations set revoked_at=now() where organization_id=$1 and user_id=$2",
           [f.org, GOV_AGENT_A],
         );
       if (restriction === "claim")
-        await pool.query(
-          "update job_queue set locked_at=clock_timestamp() where id=$1",
-          [setup.job.id],
-        );
+        await pool.query("update job_queue set locked_at=clock_timestamp() where id=$1", [
+          setup.job.id,
+        ]);
       if (restriction === "boundary")
-        await pool.query(
-          "update conversations set status='closed' where id=$1",
-          [f.boundary.conversation_id],
-        );
+        await pool.query("update conversations set status='closed' where id=$1", [
+          f.boundary.conversation_id,
+        ]);
       const result = await controlledDelivery(setup);
       expect(result.bodies).toHaveLength(0);
       expect((await row(f.id)).meeting_delivery.state).not.toBe("sent");
       if (restriction === "claim") {
         expect((await row(f.id)).meeting_delivery.state).toBe("queued");
         expect(
-          (
-            await pool.query("select status from job_queue where id=$1", [
-              setup.job.id,
-            ])
-          ).rows[0].status,
+          (await pool.query("select status from job_queue where id=$1", [setup.job.id])).rows[0]
+            .status,
         ).toBe("running");
       } else
         expect((await row(f.id)).meeting_delivery.error).toBe(
@@ -1357,10 +1353,9 @@ it.each(["user", "ai_agent"] as const)(
   "FIX1 M1: autoridade revogada durante preparo HTTP barra sink %s",
   async (origin) => {
     const setup = await deliveryFixture(origin);
-    await pool.query(
-      "update contacts set phone_number='+5531998765432' where id=$1",
-      [setup.f.contact],
-    );
+    await pool.query("update contacts set phone_number='+5531998765432' where id=$1", [
+      setup.f.contact,
+    ]);
     const result = await controlledDelivery(setup, async () => {
       await pool.query(
         "update user_organizations set revoked_at=now() where organization_id=$1 and user_id=$2",
@@ -1393,32 +1388,21 @@ it("FIX1 I4: enviado→close/reopen mesmo UUID precisa clique novo; intenção a
     f.boundary.conversation_id,
   ]);
   expect((await row(f.id)).meeting_delivery).toEqual(previous);
-  const { meetingAuthorizationCurrent } =
-    await import("@/lib/agenda/google/meet");
+  const { meetingAuthorizationCurrent } = await import("@/lib/agenda/google/meet");
   const current = (
-    await pool.query("select fn_service_boundary($1,$2) b", [
-      f.org,
-      f.boundary.conversation_id,
-    ])
+    await pool.query("select fn_service_boundary($1,$2) b", [f.org, f.boundary.conversation_id])
   ).rows[0].b;
-  expect(meetingAuthorizationCurrent(previous.service_boundary, current)).toBe(
-    false,
-  );
+  expect(meetingAuthorizationCurrent(previous.service_boundary, current)).toBe(false);
   expect((await actor(GOV_AGENT_A, human, args)).rows[0].r).toBe(true);
   const next = await row(f.id);
   expect(next.meeting_delivery.generation).not.toBe(previous.generation);
   expect(next.meeting_delivery.service_boundary.conversation_id).toBe(
     previous.service_boundary.conversation_id,
   );
-  expect(
-    next.meeting_delivery.service_boundary.service_revision,
-  ).toBeGreaterThan(previous.service_boundary.service_revision);
-  expect(
-    meetingAuthorizationCurrent(
-      next.meeting_delivery.service_boundary,
-      current,
-    ),
-  ).toBe(true);
+  expect(next.meeting_delivery.service_boundary.service_revision).toBeGreaterThan(
+    previous.service_boundary.service_revision,
+  );
+  expect(meetingAuthorizationCurrent(next.meeting_delivery.service_boundary, current)).toBe(true);
   expect((await actor(GOV_AGENT_A, human, args)).rows[0].r).toBe(false);
 });
 it("FIX1 M1: booking não pode forjar recibo humano mesmo com claim válido", async () => {
@@ -1446,18 +1430,39 @@ it("FIX1 M1: booking não pode forjar recibo humano mesmo com claim válido", as
   ).rejects.toThrow("meet_booking_origin_invalid");
 });
 it("FIX1 M1: troca de canal não transporta autorização antiga; clique explícito cria intenção nova", async () => {
-  const setup = await deliveryFixture("user"), { f, a } = setup;
+  const setup = await deliveryFixture("user"),
+    { f, a } = setup;
   const original = (await row(f.id)).meeting_delivery;
-  const channel = (await pool.query("insert into channel_sessions(organization_id,waha_session_name,status,webhook_secret_encrypted) values($1,gen_random_uuid()::text,'WORKING',decode('00','hex')) returning id", [f.org])).rows[0].id;
-  await pool.query("update conversations set channel_session_id=$2 where id=$1", [f.boundary.conversation_id, channel]);
-  await expect(assertMeetingDeliveryPg(pool, { organizationId:f.org, jobId:setup.job.id, jobClaim:claimOfJob(setup.job)! })).rejects.toThrow();
+  const channel = (
+    await pool.query(
+      "insert into channel_sessions(organization_id,waha_session_name,status,webhook_secret_encrypted) values($1,gen_random_uuid()::text,'WORKING',decode('00','hex')) returning id",
+      [f.org],
+    )
+  ).rows[0].id;
+  await pool.query("update conversations set channel_session_id=$2 where id=$1", [
+    f.boundary.conversation_id,
+    channel,
+  ]);
+  await expect(
+    assertMeetingDeliveryPg(pool, {
+      organizationId: f.org,
+      jobId: setup.job.id,
+      jobClaim: claimOfJob(setup.job)!,
+    }),
+  ).rejects.toThrow();
   expect((await row(f.id)).meeting_delivery).toEqual(original);
-  await actor(GOV_AGENT_A, human, [f.org,f.id,a.revision,a.meeting_request_id,"deliver",f.boundary.conversation_id]);
+  await actor(GOV_AGENT_A, human, [
+    f.org,
+    f.id,
+    a.revision,
+    a.meeting_request_id,
+    "deliver",
+    f.boundary.conversation_id,
+  ]);
   const next = (await row(f.id)).meeting_delivery;
   expect(next.generation).not.toBe(original.generation);
   expect(next.channel_session_id).toBe(channel);
 });
-
 
 it.each(["removed", "expired"] as const)(
   "FIX2 N1: aceite anterior reconcilia com autonomia %s; sem aceite continua bloqueado",
@@ -1471,10 +1476,7 @@ it.each(["removed", "expired"] as const)(
     const sent = await controlledDelivery(setup, undefined, true);
     expect(sent.bodies).toHaveLength(1);
     const ledgerBefore = (
-      await pool.query(
-        "select id,status,crm_message_id from send_ledger where job_id=$1",
-        [job.id],
-      )
+      await pool.query("select id,status,crm_message_id from send_ledger where job_id=$1", [job.id])
     ).rows[0];
     expect(ledgerBefore.status).toBe("accepted");
     expect((await row(f.id)).meeting_delivery.state).toBe("queued");
@@ -1498,39 +1500,28 @@ it.each(["removed", "expired"] as const)(
         [job.id],
       )
     ).rows[0];
-    expect(claimOfJob(reacquired)!.acquired_at).not.toBe(
-      claimOfJob(job)!.acquired_at,
-    );
+    expect(claimOfJob(reacquired)!.acquired_at).not.toBe(claimOfJob(job)!.acquired_at);
     // Aquisição antiga não reconhece nem liquida a tomada nova, mesmo com aceite.
     expect((await controlledDelivery(setup)).bodies).toHaveLength(0);
     expect((await row(f.id)).meeting_delivery.state).toBe("queued");
     expect(
-      (await pool.query("select status from job_queue where id=$1", [job.id]))
-        .rows[0].status,
+      (await pool.query("select status from job_queue where id=$1", [job.id])).rows[0].status,
     ).toBe("running");
-    expect(
-      (await controlledDelivery({ ...setup, job: reacquired })).bodies,
-    ).toHaveLength(0);
+    expect((await controlledDelivery({ ...setup, job: reacquired })).bodies).toHaveLength(0);
     expect((await row(f.id)).meeting_delivery.state).toBe("sent");
     expect(
       (
-        await pool.query(
-          "select id,status,crm_message_id from send_ledger where job_id=$1",
-          [job.id],
-        )
+        await pool.query("select id,status,crm_message_id from send_ledger where job_id=$1", [
+          job.id,
+        ])
       ).rows[0],
     ).toEqual(ledgerBefore);
     const messages = (
-      await pool.query("select id,status from messages where contact_id=$1", [
-        f.contact,
-      ])
+      await pool.query("select id,status from messages where contact_id=$1", [f.contact])
     ).rows;
-    expect(messages).toEqual([
-      { id: ledgerBefore.crm_message_id, status: "sent" },
-    ]);
+    expect(messages).toEqual([{ id: ledgerBefore.crm_message_id, status: "sent" }]);
     expect(
-      (await pool.query("select status from job_queue where id=$1", [job.id]))
-        .rows[0].status,
+      (await pool.query("select status from job_queue where id=$1", [job.id])).rows[0].status,
     ).toBe("done");
 
     const unsent = await deliveryFixture("ai_agent");
@@ -1545,11 +1536,8 @@ it.each(["removed", "expired"] as const)(
       error: mode === "removed" ? "sem_autorizacao" : "autorizacao_expirada",
     });
     expect(
-      (
-        await pool.query("select count(*) from send_ledger where job_id=$1", [
-          unsent.job.id,
-        ])
-      ).rows[0].count,
+      (await pool.query("select count(*) from send_ledger where job_id=$1", [unsent.job.id]))
+        .rows[0].count,
     ).toBe("0");
   },
 );

@@ -12,6 +12,12 @@ import { ENTIDADE_ESPERADA_POR_GATILHO } from "@/lib/schemas/webhooks";
 
 import { pgComoSupabase } from "../pg-como-supabase";
 
+/** Trunca Date para segundos, evitando flakiness por microssegundos do NOW() do Postgres. */
+function truncarParaSegundos(d: Date | null): string | null {
+  if (!d) return null;
+  return new Date(Math.floor(d.getTime() / 1000) * 1000).toISOString();
+}
+
 /**
  * CLIENTE PELA AGENDA (migration 0262) — contribuição de @423313 (PR #867), com a
  * decisão do dono: a regra nasce DESLIGADA e cada organização a liga.
@@ -163,7 +169,12 @@ async function comoUsuario<T extends pg.QueryResultRow>(
   }
 }
 
-async function ligar(uid: string, org: string, ligado: boolean, opcoes?: Opcoes): Promise<Resultado> {
+async function ligar(
+  uid: string,
+  org: string,
+  ligado: boolean,
+  opcoes?: Opcoes,
+): Promise<Resultado> {
   const r = await comoUsuario<{ r: Resultado }>(uid, RPC, [org, ligado], opcoes);
   return r.rows[0]!.r;
 }
@@ -206,11 +217,17 @@ async function cancelar(agendamento: string): Promise<void> {
 }
 
 async function tirarEtiquetaAMao(contato: string): Promise<void> {
-  await pool.query("update contacts set tags = array_remove(tags, $2) where id = $1", [contato, TAG_DE_CLIENTE]);
+  await pool.query("update contacts set tags = array_remove(tags, $2) where id = $1", [
+    contato,
+    TAG_DE_CLIENTE,
+  ]);
 }
 
 async function porEtiquetaAMao(contato: string): Promise<void> {
-  await pool.query("update contacts set tags = array_append(tags, $2) where id = $1", [contato, TAG_DE_CLIENTE]);
+  await pool.query("update contacts set tags = array_append(tags, $2) where id = $1", [
+    contato,
+    TAG_DE_CLIENTE,
+  ]);
 }
 
 /** De quem é a etiqueta agora: 'added', 'removed' ou null (a equipe). */
@@ -224,7 +241,10 @@ async function donoDaEtiqueta(contato: string): Promise<string | null> {
 
 /** Liga um horário que nasceu SEM contato a um contato (I35). */
 async function vincular(agendamento: string, contato: string): Promise<void> {
-  await pool.query("update calendar_appointments set contact_id = $2 where id = $1", [agendamento, contato]);
+  await pool.query("update calendar_appointments set contact_id = $2 where id = $1", [
+    agendamento,
+    contato,
+  ]);
 }
 
 /** O que a sessão recebeu: `<código>:<mensagem>`, ou 'passou' se o banco deixou. */
@@ -289,14 +309,29 @@ async function crmDe(org: string): Promise<unknown> {
 
 beforeAll(async () => {
   const usuarios = [
-    ADMIN_A, AGENT_A, ADMIN_B, ADMIN_C, ADMIN_D, MANAGER_D, AGENT_D, VIEWER_D, ADMIN_E, SUPORTE_D, ADMIN_F,
-    MANAGER_A, ADMIN_G, MANAGER_G, ADMIN_H, VIEWER_A, ADMIN_I,
+    ADMIN_A,
+    AGENT_A,
+    ADMIN_B,
+    ADMIN_C,
+    ADMIN_D,
+    MANAGER_D,
+    AGENT_D,
+    VIEWER_D,
+    ADMIN_E,
+    SUPORTE_D,
+    ADMIN_F,
+    MANAGER_A,
+    ADMIN_G,
+    MANAGER_G,
+    ADMIN_H,
+    VIEWER_A,
+    ADMIN_I,
   ];
   for (const u of usuarios) {
-    await pool.query("insert into auth.users (id, email) values ($1, $2) on conflict (id) do nothing", [
-      u,
-      `${u}@cliente-pela-agenda.test`,
-    ]);
+    await pool.query(
+      "insert into auth.users (id, email) values ($1, $2) on conflict (id) do nothing",
+      [u, `${u}@cliente-pela-agenda.test`],
+    );
   }
   for (const [org, slug] of [
     [ORG_A, "cliente-agenda-a"],
@@ -345,7 +380,12 @@ beforeAll(async () => {
   // que ninguém tocou quando a C liga.
   await marcar(ORG_B, await criarContato(ORG_B, "Histórico da B"), "2024-01-10T10:00:00Z");
   await marcar(ORG_D, await criarContato(ORG_D, "Histórico da D 1"), "2024-02-10T10:00:00Z");
-  await marcar(ORG_D, await criarContato(ORG_D, "Histórico da D 2"), "2024-03-10T10:00:00Z", "pending");
+  await marcar(
+    ORG_D,
+    await criarContato(ORG_D, "Histórico da D 2"),
+    "2024-03-10T10:00:00Z",
+    "pending",
+  );
 
   const a = await ligar(ADMIN_A, ORG_A, true);
   expect(a.ligado, "a fixture da A precisa estar ligada").toBe(true);
@@ -394,7 +434,7 @@ describe("ligada — a transição", () => {
     );
 
     const depois = await lerContato(contato);
-    expect(depois.first_service_at?.toISOString()).toBe("2026-03-12T14:00:00.000Z");
+    expect(truncarParaSegundos(depois.first_service_at)).toBe("2026-03-12T14:00:00.000Z");
     expect(depois.tags.filter((t) => t === TAG_DE_CLIENTE)).toHaveLength(1);
 
     const { rows } = await pool.query<{
@@ -460,7 +500,8 @@ describe("ligada — a transição", () => {
 
     const depois = await lerContato(contato);
     expect(depois.first_service_at?.toISOString()).toBe(criado.toISOString());
-    expect(depois.first_service_at!.getTime()).toBeLessThanOrEqual(Date.now());
+    // Desvio de relógio: o container Docker (Postgres) pode estar alguns ms à frente do host.
+    expect(depois.first_service_at!.getTime()).toBeLessThanOrEqual(Date.now() + 5000);
     expect(depois.tags).toContain(TAG_DE_CLIENTE);
   });
 
@@ -510,7 +551,11 @@ describe("cancelado e falta não contam", () => {
     expect((await lerContato(contato)).first_service_at).not.toBeNull();
 
     // `no_show` só se registra por um humano com papel (fn_appointment_stamp).
-    await comoUsuario(AGENT_A, "update calendar_appointments set status = 'no_show' where id = $1", [ag]);
+    await comoUsuario(
+      AGENT_A,
+      "update calendar_appointments set status = 'no_show' where id = $1",
+      [ag],
+    );
 
     const depois = await lerContato(contato);
     expect(depois.first_service_at).toBeNull();
@@ -539,7 +584,11 @@ describe("cancelado e falta não contam", () => {
     expect(eventos, "controle: a primeira marcação emitiu").toBe(1);
 
     const apagar = (id: string) =>
-      comoUsuario(AGENT_A, "delete from calendar_appointments where id = $1 and organization_id = $2", [id, ORG_A]);
+      comoUsuario(
+        AGENT_A,
+        "delete from calendar_appointments where id = $1 and organization_id = $2",
+        [id, ORG_A],
+      );
 
     expect((await apagar(primeiro)).rowCount, "a policy deixa o agent apagar").toBe(1);
     const meio = await lerContato(contato);
@@ -606,7 +655,10 @@ describe("a etiqueta tirada à mão é respeitada", () => {
     expect(await donoDaEtiqueta(contato)).toBe("added");
 
     await tirarEtiquetaAMao(contato);
-    expect(await donoDaEtiqueta(contato), "tirar à mão passa a etiqueta para a equipe NA HORA").toBeNull();
+    expect(
+      await donoDaEtiqueta(contato),
+      "tirar à mão passa a etiqueta para a equipe NA HORA",
+    ).toBeNull();
     await porEtiquetaAMao(contato);
     expect(await donoDaEtiqueta(contato), "repor à mão também é da equipe").toBeNull();
 
@@ -655,7 +707,10 @@ describe("o evento sai UMA vez por contato", () => {
     const depois = await lerContato(contato);
     expect(depois.first_service_at?.toISOString()).toBe("2025-06-20T10:00:00.000Z");
     expect(depois.tags, "voltou a ser cliente: a etiqueta volta").toContain(TAG_DE_CLIENTE);
-    expect(await eventosDeEtiqueta({ contato }), "cancelar e marcar de novo = 1 evento no total").toBe(1);
+    expect(
+      await eventosDeEtiqueta({ contato }),
+      "cancelar e marcar de novo = 1 evento no total",
+    ).toBe(1);
   });
 
   it("I30 · a equipe tirou a etiqueta; o horário foi cancelado e refeito: a etiqueta não volta, e nada emite", async () => {
@@ -685,7 +740,10 @@ describe("o evento sai UMA vez por contato", () => {
 
     const { rows } = await comoUsuario<{ r: Juncao }>(MANAGER_A, JUNTAR, [ORG_A, nova, [antiga]]);
 
-    expect(rows[0]!.r.repontado["calendar_appointments.contact_id"], "controle: o horário foi repontado").toBe(1);
+    expect(
+      rows[0]!.r.repontado["calendar_appointments.contact_id"],
+      "controle: o horário foi repontado",
+    ).toBe(1);
     const vencedora = await lerContato(nova);
     expect(vencedora.first_service_at?.toISOString()).toBe("2023-05-01T10:00:00.000Z");
     expect(vencedora.tags.filter((t) => t === TAG_DE_CLIENTE)).toHaveLength(1);
@@ -733,7 +791,7 @@ describe("LGPD e tenancy", () => {
 
     const depois = await lerContato(contato);
     expect(depois.tags).not.toContain(TAG_DE_CLIENTE);
-    expect(depois.first_service_at?.toISOString()).toBe("2026-03-12T14:00:00.000Z");
+    expect(truncarParaSegundos(depois.first_service_at)).toBe("2026-03-12T14:00:00.000Z");
     expect(await eventosDeEtiqueta({ contato })).toBe(eventos);
   });
 
@@ -774,7 +832,10 @@ describe("LGPD e tenancy", () => {
     // CONTROLE POSITIVO: com a organização CERTA, a MESMA chamada trabalha. Sem
     // ele, uma função que devolvesse 'ignorado' sempre passaria aqui.
     await marcar(ORG_B, daB, "2026-09-01T10:00:00Z");
-    expect((await lerContato(daB)).first_service_at, "a B está desligada: o trigger não faz nada").toBeNull();
+    expect(
+      (await lerContato(daB)).first_service_at,
+      "a B está desligada: o trigger não faz nada",
+    ).toBeNull();
     const certo = await pool.query<{ r: string }>(
       "select fn_recalcular_cliente_do_contato($1, $2, false) as r",
       [ORG_B, daB],
@@ -843,14 +904,24 @@ describe("ligar classifica o histórico SÓ da organização que liga", () => {
   it("I15 · ligar de novo: mudou=false, ninguém ganha, nenhum updated_at se move", async () => {
     const antes = await retrato(ORG_C);
     const r = await ligar(ADMIN_C, ORG_C, true);
-    expect(r).toMatchObject({ ligado: true, mudou: false, ganharam_etiqueta: 0, perderam_etiqueta: 0 });
+    expect(r).toMatchObject({
+      ligado: true,
+      mudou: false,
+      ganharam_etiqueta: 0,
+      perderam_etiqueta: 0,
+    });
     expect(await retrato(ORG_C)).toEqual(antes);
   });
 
   it("I16 · desligar não muda contato; o que acontece desligada não aplica; religar recalcula", async () => {
     const antes = await retrato(ORG_C);
     const desligou = await ligar(ADMIN_C, ORG_C, false);
-    expect(desligou).toMatchObject({ ligado: false, mudou: true, ganharam_etiqueta: 0, perderam_etiqueta: 0 });
+    expect(desligou).toMatchObject({
+      ligado: false,
+      mudou: true,
+      ganharam_etiqueta: 0,
+      perderam_etiqueta: 0,
+    });
     expect(await crmDe(ORG_C)).toEqual({ cliente_pela_agenda: false });
     expect(await retrato(ORG_C), "desligar não toca contato").toEqual(antes);
 
@@ -864,14 +935,20 @@ describe("ligar classifica o histórico SÓ da organização que liga", () => {
     await marcar(ORG_C, novo, "2026-01-15T10:00:00Z");
 
     const confirmadoDesligada = await lerContato(c.confirmado!);
-    expect(confirmadoDesligada.first_service_at?.toISOString(), "desligada, a data fica congelada").toBe(
-      "2023-05-01T10:00:00.000Z",
-    );
+    expect(
+      confirmadoDesligada.first_service_at?.toISOString(),
+      "desligada, a data fica congelada",
+    ).toBe("2023-05-01T10:00:00.000Z");
     expect(confirmadoDesligada.tags).toContain(TAG_DE_CLIENTE);
     expect((await lerContato(novo)).first_service_at).toBeNull();
 
     const religou = await ligar(ADMIN_C, ORG_C, true);
-    expect(religou).toMatchObject({ ligado: true, mudou: true, ganharam_etiqueta: 1, perderam_etiqueta: 1 });
+    expect(religou).toMatchObject({
+      ligado: true,
+      mudou: true,
+      ganharam_etiqueta: 1,
+      perderam_etiqueta: 1,
+    });
 
     const perdeu = await lerContato(c.confirmado!);
     expect(perdeu.first_service_at).toBeNull();
@@ -910,7 +987,9 @@ describe("ligar classifica o histórico SÓ da organização que liga", () => {
     // na de clientes. Sem o par, um número fixo em 1 passaria.
     await marcar(ORG_I, contato, "2026-08-02T10:00:00Z");
     const religou = await ligar(ADMIN_I, ORG_I, false);
-    expect(religou.com_agendamento_que_nao_conta, "desligar não recalcula, mas conta o AGORA").toBe(0);
+    expect(religou.com_agendamento_que_nao_conta, "desligar não recalcula, mas conta o AGORA").toBe(
+      0,
+    );
   });
 
   it("I10b · na C: etiquetada, tirada à mão, desligada e religada — a etiqueta não volta", async () => {
@@ -935,7 +1014,9 @@ describe("quem pode ligar", () => {
   it("I17 · manager, agent e viewer da D: 42501, settings.crm ausente e contatos iguais", async () => {
     const antes = await retrato(ORG_D);
     for (const quem of [MANAGER_D, AGENT_D, VIEWER_D]) {
-      await expect(ligar(quem, ORG_D, true), `papel ${quem}`).rejects.toMatchObject({ code: "42501" });
+      await expect(ligar(quem, ORG_D, true), `papel ${quem}`).rejects.toMatchObject({
+        code: "42501",
+      });
     }
     expect(await crmDe(ORG_D)).toBeNull();
     expect(await retrato(ORG_D)).toEqual(antes);
@@ -952,9 +1033,9 @@ describe("quem pode ligar", () => {
 
   it("I19 · sem sessão: authenticated sem sub e service_role — 42501", async () => {
     const antes = await crmDe(ORG_D);
-    await expect(
-      comoUsuario(null, RPC, [ORG_D, true], { semClaims: true }),
-    ).rejects.toMatchObject({ code: "42501" });
+    await expect(comoUsuario(null, RPC, [ORG_D, true], { semClaims: true })).rejects.toMatchObject({
+      code: "42501",
+    });
     await expect(comoUsuario(null, RPC, [ORG_D, true])).rejects.toMatchObject({ code: "42501" });
     await expect(
       comoUsuario(null, RPC, [ORG_D, true], { papel: "service_role" }),
@@ -1001,7 +1082,9 @@ describe("quem pode ligar", () => {
     );
     const antes = { crm: await crmDe(ORG_D), contatos: await retrato(ORG_D) };
     try {
-      await expect(ligar(SUPORTE_D, ORG_D, true, { sessao })).rejects.toMatchObject({ code: "42501" });
+      await expect(ligar(SUPORTE_D, ORG_D, true, { sessao })).rejects.toMatchObject({
+        code: "42501",
+      });
 
       // Vencida: `fn_user_role_in_org` volta a ler a filiação (admin da D), e
       // quem barra é `fn_support_write_allowed` — a guarda que só este caso isola.
@@ -1009,7 +1092,9 @@ describe("quem pode ligar", () => {
         "update platform_support_sessions set access_mode = 'full', expires_at = now() - interval '1 second' where id = $1",
         [suporte],
       );
-      await expect(ligar(SUPORTE_D, ORG_D, true, { sessao })).rejects.toMatchObject({ code: "42501" });
+      await expect(ligar(SUPORTE_D, ORG_D, true, { sessao })).rejects.toMatchObject({
+        code: "42501",
+      });
 
       expect({ crm: await crmDe(ORG_D), contatos: await retrato(ORG_D) }).toEqual(antes);
     } finally {
@@ -1032,9 +1117,21 @@ describe("as três colunas são do sistema", () => {
   // (`added`), então o forjado é `removed` — é a escrita que faria o sistema
   // devolver a etiqueta na próxima marcação.
   const TRES = [
-    ["first_service_at", "update contacts set first_service_at = $2::timestamptz where id = $1", "2019-01-01T00:00:00Z"],
-    ["client_recognized_at", "update contacts set client_recognized_at = $2::timestamptz where id = $1", "2019-01-01T00:00:00Z"],
-    ["client_tag_by_system", "update contacts set client_tag_by_system = $2 where id = $1", "removed"],
+    [
+      "first_service_at",
+      "update contacts set first_service_at = $2::timestamptz where id = $1",
+      "2019-01-01T00:00:00Z",
+    ],
+    [
+      "client_recognized_at",
+      "update contacts set client_recognized_at = $2::timestamptz where id = $1",
+      "2019-01-01T00:00:00Z",
+    ],
+    [
+      "client_tag_by_system",
+      "update contacts set client_tag_by_system = $2 where id = $1",
+      "removed",
+    ],
   ] as const;
 
   it("I36 · viewer, agent e admin da PRÓPRIA organização: 42501 nas três, e o valor não muda", async () => {
@@ -1161,7 +1258,10 @@ describe("o funil de clientes", () => {
       [ORG_B, funilDeClientes],
     );
     const contato = await criarContato(ORG_B, "Congelada");
-    await pool.query("update contacts set first_service_at = '2022-01-01T10:00:00Z' where id = $1", [contato]);
+    await pool.query(
+      "update contacts set first_service_at = '2022-01-01T10:00:00Z' where id = $1",
+      [contato],
+    );
 
     const r = await garantirLeadDaConversa(db, {
       organizationId: ORG_B,
@@ -1197,7 +1297,10 @@ describe("o funil de clientes", () => {
 
   it("I26 · funil de clientes SEM etapa utilizável cai no padrão — o lead nasce de qualquer jeito", async () => {
     const semEtapaAberta = randomUUID();
-    await pool.query("update crm_pipelines set is_client_pipeline = false where organization_id = $1", [ORG_A]);
+    await pool.query(
+      "update crm_pipelines set is_client_pipeline = false where organization_id = $1",
+      [ORG_A],
+    );
     await pool.query(
       `insert into crm_pipelines (id, organization_id, name, slug, position, is_client_pipeline)
        values ($1, $2, 'Clientes sem etapa', 'clientes-sem-etapa', 9100, true)`,
@@ -1224,7 +1327,11 @@ describe("o funil de clientes", () => {
  */
 describe("as corridas", () => {
   /** Espera a conexão `pid` ficar bloqueada por `dono`, ou a promessa terminar. */
-  async function esperarBloqueio(pid: number, dono: number, terminou: () => boolean): Promise<void> {
+  async function esperarBloqueio(
+    pid: number,
+    dono: number,
+    terminou: () => boolean,
+  ): Promise<void> {
     for (let i = 0; i < 100 && !terminou(); i++) {
       const { rows } = await pool.query<{ bloqueada: boolean }>(
         "select $2::int = any(pg_blocking_pids($1::int)) as bloqueada",
@@ -1252,7 +1359,9 @@ describe("as corridas", () => {
     const contato = await criarContato(ORG_A, "Corrida de remarcação");
     const cedo = await marcar(ORG_A, contato, "2025-01-01T15:00:00Z");
     const tarde = await marcar(ORG_A, contato, "2025-01-01T16:00:00Z");
-    expect((await lerContato(contato)).first_service_at?.toISOString()).toBe("2025-01-01T15:00:00.000Z");
+    expect((await lerContato(contato)).first_service_at?.toISOString()).toBe(
+      "2025-01-01T15:00:00.000Z",
+    );
 
     const a = await pool.connect();
     const b = await pool.connect();
@@ -1348,7 +1457,8 @@ describe("as corridas", () => {
     await conexao.query("select set_config('request.jwt.claims', $1, true)", [
       JSON.stringify({ sub: uid, role: "authenticated", aal: "aal1" }),
     ]);
-    const pid = (await conexao.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0]!.pid;
+    const pid = (await conexao.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0]!
+      .pid;
     return { conexao, pid };
   }
 
