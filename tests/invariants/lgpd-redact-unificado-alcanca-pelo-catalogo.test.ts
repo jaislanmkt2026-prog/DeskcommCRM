@@ -129,161 +129,219 @@ const DECISOES: Record<string, Decisao> = {
   contacts: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "Passo 1 da própria cascata: nome/rótulo, email, telefone, CPF, data de nascimento, consent, source_metadata e tags; is_anonymized/anonymized_at viram o que responde ao titular.",
+    razao:
+      "Passo 1 da própria cascata: nome/rótulo, email, telefone, CPF, data de nascimento, consent, source_metadata e tags; is_anonymized/anonymized_at viram o que responde ao titular.",
   },
   conversations: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "Passo 2: metadata, last_message_preview e last_handoff_reason; a linha FICA porque a conversa é a linha do tempo do atendimento.",
+    razao:
+      "Passo 2: metadata, last_message_preview e last_handoff_reason; a linha FICA porque a conversa é a linha do tempo do atendimento.",
   },
   messages: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "Passo 3: body vira '[mensagem anonimizada]', mídia zerada e metadata esvaziada; status e timestamps preservados.",
+    razao:
+      "Passo 3: body vira '[mensagem anonimizada]', mídia zerada e metadata esvaziada; status e timestamps preservados.",
   },
   crm_lead_activities: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "Passo 4: payload, metadata e reason (texto livre escrito por LLM sobre a conversa) zerados; evidence guarda só ids.",
+    razao:
+      "Passo 4: payload, metadata e reason (texto livre escrito por LLM sobre a conversa) zerados; evidence guarda só ids.",
   },
   crm_leads: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "Passo 5: título vira o rótulo, descrição/custom_fields/source_metadata/tags zerados; funil, estágio e valor ficam (são do negócio, não da pessoa).",
+    razao:
+      "Passo 5: título vira o rótulo, descrição/custom_fields/source_metadata/tags zerados; funil, estágio e valor ficam (são do negócio, não da pessoa).",
   },
   orders: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "Passo 6: só os campos PESSOAIS do payload jsonb saem; valores, status e timestamps ficam — pedido tem obrigação fiscal de guarda, e a issue pede essa decisão escrita.",
+    razao:
+      "Passo 6: só os campos PESSOAIS do payload jsonb saem; valores, status e timestamps ficam — pedido tem obrigação fiscal de guarda, e a issue pede essa decisão escrita.",
   },
   sales: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "Venda redigida no mesmo molde do pedido: o que é da pessoa sai, o que é do negócio (valor, data) fica pela mesma obrigação fiscal.",
+    razao:
+      "Venda redigida no mesmo molde do pedido: o que é da pessoa sai, o que é do negócio (valor, data) fica pela mesma obrigação fiscal.",
   },
   voice_calls: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "peer_phone e demais campos de gente viram resíduo; a chamada em si (duração, status, destino técnico) fica — 0235 tirou a tabela de fora da cascata e foi aqui que ela voltou.",
+    razao:
+      "peer_phone e demais campos de gente viram resíduo; a chamada em si (duração, status, destino técnico) fica — 0235 tirou a tabela de fora da cascata e foi aqui que ela voltou.",
   },
   prospecting_candidates: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "0370: telefone e conteúdo da prospecção viram tombstone (suppression_salt), que é o que continua BARRANDO a reimportação depois da anonimização.",
+    razao:
+      "0370: telefone e conteúdo da prospecção viram tombstone (suppression_salt), que é o que continua BARRANDO a reimportação depois da anonimização.",
   },
   demandas: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "0359: texto livre do que o cliente pediu (a comanda) é redigido; a linha da demanda fica com o ciclo de vida.",
+    razao:
+      "0359: texto livre do que o cliente pediu (a comanda) é redigido; a linha da demanda fica com o ciclo de vida.",
   },
   agent_case_chat_messages: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "0281: corpo da conversa do caso redigido por transição, com redacted_at idempotente; a linha fica para o histórico do caso.",
+    razao:
+      "0281: corpo da conversa do caso redigido por transição, com redacted_at idempotente; a linha fica para o histórico do caso.",
   },
   passagens_de_atendimento: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "0291: o texto rico do que foi passado ao humano é a transcrição da pessoa; redigido, com o resto do fato preservado.",
+    razao:
+      "0291: o texto rico do que foi passado ao humano é a transcrição da pessoa; redigido, com o resto do fato preservado.",
   },
   campaign_recipients: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "0379: rendered_body (a MENSAGEM dita à pessoa) e recipient_address saem; a LINHA fica, porque é a prova de que esteve na campanha.",
+    razao:
+      "0379: rendered_body (a MENSAGEM dita à pessoa) e recipient_address saem; a LINHA fica, porque é a prova de que esteve na campanha.",
   },
   campaign_suppressions: {
     decidida: "redigir",
     caminho: "cascata",
-    razao: "0379: a cauda do número sai, mas a linha é o 'não me mande mais' — apagá-la faria a pessoa voltar a receber campanha.",
+    razao:
+      "0379: a cauda do número sai, mas a linha é o 'não me mande mais' — apagá-la faria a pessoa voltar a receber campanha.",
   },
   // ── redigir pela virada de is_anonymized (gatilho) ────────────────────────
   ai_reply_drafts: {
     decidida: "redigir",
     caminho: "gatilho",
-    razao: "fn_reply_redact (0227): rascunho/original/propostas zerados na virada — texto gerado sobre a conversa da pessoa, alcançável pelos DOIS caminhos.",
+    razao:
+      "fn_reply_redact (0227): rascunho/original/propostas zerados na virada — texto gerado sobre a conversa da pessoa, alcançável pelos DOIS caminhos.",
   },
   calendar_appointments: {
     decidida: "redigir",
     caminho: "gatilho",
-    razao: "0184: title, description, notes, location_details e cancellation_reason são texto livre que nomeia a pessoa (queixa clínica numa clínica); gatilho da virada, com google/meet no mesmo acorde.",
+    razao:
+      "0184: title, description, notes, location_details e cancellation_reason são texto livre que nomeia a pessoa (queixa clínica numa clínica); gatilho da virada, com google/meet no mesmo acorde.",
   },
   contact_field_proposals: {
     decidida: "redigir",
     caminho: "gatilho",
-    razao: "fn_apaga_propostas_de_contato_anonimizado: a fila guarda o VALOR proposto para virar escrita em contacts — apaga, não redige, porque proposta pendente de contato anonimizado não tem mais destinatário.",
+    razao:
+      "fn_apaga_propostas_de_contato_anonimizado: a fila guarda o VALOR proposto para virar escrita em contacts — apaga, não redige, porque proposta pendente de contato anonimizado não tem mais destinatário.",
   },
   crm_tasks: {
     decidida: "redigir",
     caminho: "gatilho",
-    razao: "0210: título trocado e descrição apagada na virada — 'Ligar para Fulano confirmar o orçamento' é texto que nomeia a pessoa.",
+    razao:
+      "0210: título trocado e descrição apagada na virada — 'Ligar para Fulano confirmar o orçamento' é texto que nomeia a pessoa.",
   },
   job_queue: {
     decidida: "redigir",
     caminho: "gatilho",
-    razao: "Payload do trabalho em curso esvaziado na virada (fn_meet_redact_contact / fn_reply_redact), com o job derrubado para failed: o payload carrega ids do compromisso e do contato.",
+    razao:
+      "Payload do trabalho em curso esvaziado na virada (fn_meet_redact_contact / fn_reply_redact), com o job derrubado para failed: o payload carrega ids do compromisso e do contato.",
   },
   lead_checkpoints: {
     decidida: "redigir",
     caminho: "gatilho",
-    razao: "0391: resumo corrido, compromissos, objeções, próxima ação e declaração do turno são texto de modelo sobre a pessoa — redigidos pela virada, que é o caminho que os DOIS compartilham.",
+    razao:
+      "0391: resumo corrido, compromissos, objeções, próxima ação e declaração do turno são texto de modelo sobre a pessoa — redigidos pela virada, que é o caminho que os DOIS compartilham.",
   },
   webhook_lead_captures: {
     decidida: "redigir",
     caminho: "gatilho",
-    razao: "0174: captured_name/captured_email/captured_phone (o payload cru de captação) zerados por gatilho — a entrada na dívida do invariante irmão é o aviso de que este instrumento não lia gatilho.",
+    razao:
+      "0174: captured_name/captured_email/captured_phone (o payload cru de captação) zerados por gatilho — a entrada na dívida do invariante irmão é o aviso de que este instrumento não lia gatilho.",
   },
   // ── manter: a linha e o conteúdo ficam, por decisão ───────────────────────
   ai_agent_runs: {
     decidida: "manter",
-    razao: "Resultado da execução do agente: status, código de erro e ids das mensagens trocadas. Nenhum campo guarda nome, telefone ou corpo de mensagem — o texto da pessoa mora em messages/conversations, que a cascata redige.",
+    razao:
+      "Resultado da execução do agente: status, código de erro e ids das mensagens trocadas. Nenhum campo guarda nome, telefone ou corpo de mensagem — o texto da pessoa mora em messages/conversations, que a cascata redige.",
   },
   before_send_traces: {
     decidida: "manter",
-    razao: "Traço de decisão do gate de envio (vetoed_gate/vetoed_code) para auditoria de POR QUE a mensagem não saiu; é código de vocabulário, não o conteúdo enviado — o corpo mora em messages.",
+    razao:
+      "Traço de decisão do gate de envio (vetoed_gate/vetoed_code) para auditoria de POR QUE a mensagem não saiu; é código de vocabulário, não o conteúdo enviado — o corpo mora em messages.",
   },
   cron_jobs: {
     decidida: "manter",
-    razao: "Agenda do agendador (kind, intervalo, expressão, payload de configuração) — dado de operação da instalação, sem texto da pessoa; a FK existe para dizer de QUEM é o job.",
+    razao:
+      "Agenda do agendador (kind, intervalo, expressão, payload de configuração) — dado de operação da instalação, sem texto da pessoa; a FK existe para dizer de QUEM é o job.",
   },
   followup_enrollments: {
     decidida: "manter",
-    razao: "Trilha de estados do roteiro (ponte, nó atual, status, motivo de cancelamento — vocabulário fechado), sem texto livre. A virada de is_anonymizado ENCERRA o roteiro em curso pelo gatilho da 0394; encerrar não é redigir, e não sobra nada legível da pessoa.",
+    razao:
+      "Trilha de estados do roteiro (ponte, nó atual, status, motivo de cancelamento — vocabulário fechado), sem texto livre. A virada de is_anonymizado ENCERRA o roteiro em curso pelo gatilho da 0394; encerrar não é redigir, e não sobra nada legível da pessoa.",
   },
   google_ads_click_refs: {
     decidida: "manter",
-    razao: "gclid/token de clique da plataforma e a query de aterrissagem — identificador de campanha que existe para casar o clique ao contato. Sem nome, telefone ou e-mail; apagar desfaria a atribuição da conversão.",
+    razao:
+      "gclid/token de clique da plataforma e a query de aterrissagem — identificador de campanha que existe para casar o clique ao contato. Sem nome, telefone ou e-mail; apagar desfaria a atribuição da conversão.",
   },
   lead_notes: {
     decidida: "manter",
-    razao: "⚠️ DÍVIDA CONHECIDA, não conforto: headline/body são texto livre do agente SOBRE a pessoa e hoje NENHUM caminho os redige (mesma entrada em DIVIDA_LGPD_CONHECIDA do invariante irmão). Esta entrada vira `redigir`+`cascata` no MESMO commit que acrescentar o passo — e o irmão tira a dívida naquele commit.",
+    razao:
+      "⚠️ DÍVIDA CONHECIDA, não conforto: headline/body são texto livre do agente SOBRE a pessoa e hoje NENHUM caminho os redige (mesma entrada em DIVIDA_LGPD_CONHECIDA do invariante irmão). Esta entrada vira `redigir`+`cascata` no MESMO commit que acrescentar o passo — e o irmão tira a dívida naquele commit.",
   },
   lead_state: {
     decidida: "manter",
-    razao: "Estágio, qualificação e próxima ação do funil: vocabulário fechado do motor, sem texto escrito sobre a pessoa — redigir apagaria o estado do negócio sem proteger ninguém.",
+    razao:
+      "Estágio, qualificação e próxima ação do funil: vocabulário fechado do motor, sem texto escrito sobre a pessoa — redigir apagaria o estado do negócio sem proteger ninguém.",
   },
   lead_state_transitions: {
     decidida: "manter",
-    razao: "Histórico de transições (de/para estágio e reason em código): é a trilha de auditoria do funil, legível sem identificar a pessoa além do próprio contato, que já está anonimizado.",
+    razao:
+      "Histórico de transições (de/para estágio e reason em código): é a trilha de auditoria do funil, legível sem identificar a pessoa além do próprio contato, que já está anonimizado.",
   },
   lgpd_requests: {
     decidida: "manter",
-    razao: "O PRÓPRIO pedido do titular — justificativa, escopo e desfecho. Guardá-lo é a prova de que o direito foi exercido no prazo (D+7 export, D+15 redact); apagá-lo apagaria a resposta ao titular sobre o próprio pedido.",
+    razao:
+      "O PRÓPRIO pedido do titular — justificativa, escopo e desfecho. Guardá-lo é a prova de que o direito foi exercido no prazo (D+7 export, D+15 redact); apagá-lo apagaria a resposta ao titular sobre o próprio pedido.",
   },
   llm_calls: {
     decidida: "manter",
-    razao: "Ficha de custo e propósito da chamada (provider, modelo, cost_cents) — sem prompt e sem resposta no corpo. É o que a tela de orçamento soma; a entrada de texto pessoal está nas tabelas que a cascata redige.",
+    razao:
+      "Ficha de custo e propósito da chamada (provider, modelo, cost_cents) — sem prompt e sem resposta no corpo. É o que a tela de orçamento soma; a entrada de texto pessoal está nas tabelas que a cascata redige.",
   },
   loyalty_ledger: {
     decidida: "manter",
-    razao: "Extrato de pontos (quantidade, reason em vocabulário, idempotency_key): dado do PROGRAMA de fidelidade, e o histórico de saldo precisa fechar. A pessoa por trás já está anônima na cascata.",
+    razao:
+      "Extrato de pontos (quantidade, reason em vocabulário, idempotency_key): dado do PROGRAMA de fidelidade, e o histórico de saldo precisa fechar. A pessoa por trás já está anônima na cascata.",
   },
   meta_ads_click_refs: {
     decidida: "manter",
-    razao: "token/utm/query de aterrissagem da Meta, mesmo motivo do gclid: identificador de campanha que só serve enquanto existir — apagar desfaz a atribuição sem proteger texto de ninguém.",
+    razao:
+      "token/utm/query de aterrissagem da Meta, mesmo motivo do gclid: identificador de campanha que só serve enquanto existir — apagar desfaz a atribuição sem proteger texto de ninguém.",
+  },
+  document_checklist_items: {
+    decidida: "redigir",
+    caminho: "cascata",
+    razao:
+      "0429: checklist_key (metadado do documento) e recusado_motivo (texto livre) são dados da pessoa; o vínculo ao message_id já é zerado pela cascata da tabela messages.",
+  },
+  negotiations: {
+    decidida: "redigir",
+    caminho: "cascata",
+    razao:
+      "0433: negociação imobiliária vinculada ao contato; não há campos de texto livre além do vínculo, mas a existência da linha revela o interesse da pessoa — redigir mantém a linha com FK zerada ou anonima.",
+  },
+  property_proposals: {
+    decidida: "redigir",
+    caminho: "cascata",
+    razao:
+      "0434: proposta comercial vinculada ao cliente (client_id); payment_composition é jsonb de valores, mas a existência da proposta identifica a pessoa — redigir mantém a linha com FK zerada ou anonima.",
+  },
+  lead_notes: {
+    decidida: "redigir",
+    caminho: "cascata",
+    razao:
+      "⚠️ DÍVIDA CONHECIDA: headline/body são texto livre do agente SOBRE a pessoa e hoje NENHUM caminho os redige. Esta entrada vira redigir+cascata no MESMO commit que acrescentar o passo à função única — e o invariante irmão tira a dívida naquele commit.",
   },
   send_ledger: {
     decidida: "manter",
-    razao: "body_hash é IRREVERSÍVEL (a própria doutrina do invariante irmão manda `_hash` ficar de fora) e last_error/status são código; é a prova de que a mensagem saiu, sem guardar o que ela dizia.",
+    razao:
+      "body_hash é IRREVERSÍVEL (a própria doutrina do invariante irmão manda `_hash` ficar de fora) e last_error/status são código; é a prova de que a mensagem saiu, sem guardar o que ela dizia.",
   },
 };
 
@@ -403,8 +461,15 @@ describe("LGPD: redact unificado — catálogo de FKs com decisão escrita", () 
   it("contacts: consent, source_metadata e tags zerados NO PASSO 1", () => {
     const corpoDaCascata = corpo("fn_lgpd_cascade_redact_contact");
     const passo1 = /update\s+contacts\s+set([\s\S]*?);/.exec(corpoDaCascata)?.[1] ?? "";
-    expect(passo1.length, "passo 1 (o update de contacts) não encontrado na função").toBeGreaterThan(0);
-    for (const campo of ["consent = '{}'::jsonb", "source_metadata = '{}'::jsonb", "tags = '{}'::text[]"]) {
+    expect(
+      passo1.length,
+      "passo 1 (o update de contacts) não encontrado na função",
+    ).toBeGreaterThan(0);
+    for (const campo of [
+      "consent = '{}'::jsonb",
+      "source_metadata = '{}'::jsonb",
+      "tags = '{}'::text[]",
+    ]) {
       expect(
         passo1,
         `contacts.${campo.split(" ")[0]} não é zerado no passo 1 — é o campo que a issue #1504 cobre junto com as 11 tabelas`,

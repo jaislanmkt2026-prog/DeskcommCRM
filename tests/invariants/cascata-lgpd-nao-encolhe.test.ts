@@ -92,6 +92,14 @@ const TABELAS_NA_CASCATA = [
   // `lgpd-alcanca-prospeccao-de-quem-ja-era-contato.test.ts`.
   "prospecting_candidates",
   "voice_calls", //        0235 — o telefone de quem falou ao telefone
+  // 0439 — strip contact_id + message_id + recusado_motivo; preserve checklist_key/status/recebido_em
+  "document_checklist_items",
+  // 0439 — strip contact_id + responsavel_contact_id; preserve unidade/imovel/estagio/valor
+  "negotiations",
+  // 0439 — strip client_id + payment_composition; preserve unit/price_list/status
+  "property_proposals",
+  // 0439 — headline/body/embedding; FK direta contact_id (migration 0050)
+  "lead_notes",
 ] as const;
 
 /**
@@ -168,7 +176,10 @@ describe("catraca: a cascata de LGPD e a reserva do emit_event não encolhem", (
     // comparação "não sobra nenhuma" passar enquanto a de "não falta nenhuma"
     // reprovaria com uma mensagem que não fala de defeito nenhum.
     const lidas = tabelasNaCascata();
-    expect(lidas.length, "a cascata não foi lida do banco — sonda cega ou função ausente").toBeGreaterThan(5);
+    expect(
+      lidas.length,
+      "a cascata não foi lida do banco — sonda cega ou função ausente",
+    ).toBeGreaterThan(5);
     expect(lidas, "a cascata não toca `contacts` — isso não é possível").toContain("contacts");
   });
 

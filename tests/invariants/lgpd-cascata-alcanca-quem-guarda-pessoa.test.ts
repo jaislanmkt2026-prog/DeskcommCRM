@@ -54,12 +54,9 @@ const DIVIDA_LGPD_CONHECIDA: Record<string, string> = {
   calendar_appointments:
     "Achado do levantamento 13 §2 (QAVivo/maestro). Guarda title e notes do compromisso. " +
     "Conserto DESPACHADO ao Arquiteto — sai desta lista no mesmo commit que acrescentar a tabela à cascata.",
-  lead_notes:
-    "Anotação livre do atendente SOBRE o contato (coluna body). Dívida anterior à agenda; " +
-    "nenhum commit a declarou. Sai quando o cascade a alcançar.",
   crm_tasks:
     "Migration 0210 (extração do PR #418). A tabela guarda `title` — texto livre que " +
-    "na prática nomeia a pessoa (\"Ligar para Fulano confirmar o orçamento\"). " +
+    'na prática nomeia a pessoa ("Ligar para Fulano confirmar o orçamento"). ' +
     "⚠️ ELA JÁ ESTÁ PROTEGIDA: o trigger `trg_redigir_tarefas_ao_anonimizar` troca o " +
     "título e apaga a descrição na transição `is_anonymized false → true`, e " +
     "`tests/invariants/lgpd-tarefa-do-contato-anonimizado.test.ts` prova o efeito " +
@@ -195,6 +192,9 @@ describe("LGPD: a cascata alcança toda tabela que guarda dado de pessoa", () =>
     const semRazao = Object.entries(DIVIDA_LGPD_CONHECIDA)
       .filter(([, razao]) => razao.trim().length < 40)
       .map(([t]) => t);
-    expect(semRazao, "Entrada sem justificativa — lista à mão sem razão é o defeito de novo.").toEqual([]);
+    expect(
+      semRazao,
+      "Entrada sem justificativa — lista à mão sem razão é o defeito de novo.",
+    ).toEqual([]);
   });
 });
