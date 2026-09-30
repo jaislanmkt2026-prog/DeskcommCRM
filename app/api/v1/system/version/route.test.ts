@@ -39,6 +39,7 @@ let insertError: { code: string; message: string } | null;
 let versionSelectError: { message: string } | null;
 /** Erro que a leitura (`maybeSingle`) de `system_update_runs` deve devolver neste caso. */
 let runSelectError: { message: string } | null;
+let crivoState: { crivo_environment: string; kill_switch: boolean; change_fingerprint: string };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,6 +50,8 @@ beforeEach(() => {
   insertError = null;
   versionSelectError = null;
   runSelectError = null;
+  vi.stubEnv("CRIVO_ENVIRONMENT", "staging");
+  crivoState = { crivo_environment: "staging", kill_switch: false, change_fingerprint: "a".repeat(64) };
   versionRow = {
     id: 1,
     current_version: "1.0.0",
@@ -65,6 +68,18 @@ beforeEach(() => {
   };
 
   vi.mocked(createAdminClient).mockReturnValue({
+    rpc: async (_fn: string, args: Record<string, unknown>) => {
+      if (insertError) return { data: null, error: insertError };
+      inserted = {
+        from_version: args.p_from_version,
+        to_version: args.p_to_version,
+        status: "dispatched",
+        requested_by: args.p_requested_by,
+        crivo_environment: args.p_environment,
+        change_fingerprint: args.p_fingerprint,
+      };
+      return { data: "44444444-4444-4444-8444-444444444444", error: null };
+    },
     from: (table: string) => {
       // O double espelha o banco: `system_version` é sempre buscado por
       // `.eq("id", 1)`; `system_update_runs` é buscado tanto por
@@ -76,8 +91,8 @@ beforeEach(() => {
       // quebraria com TypeError, e o teste "melhoraria" o mock em vez do
       // double refletir a query de verdade.
       const maybeSingle = async () => ({
-        data: table === "system_version" ? versionRow : runRow,
-        error: table === "system_version" ? versionSelectError : runSelectError,
+        data: table === "system_version" ? versionRow : table === "system_upstream_state" ? crivoState : runRow,
+        error: table === "system_version" ? versionSelectError : table === "system_upstream_state" ? null : runSelectError,
       });
       return {
         select: () => ({

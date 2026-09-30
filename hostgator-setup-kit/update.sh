@@ -211,6 +211,7 @@ finalizar_update_supervisionado() {
   trap - EXIT INT TERM HUP
 
   if [ "$rc" -ne 0 ] && { [ -n "${CODIGO_TROCADO:-}" ] || [ -n "${BANCO_PODE_TER_MUDADO:-}" ] || [ -n "${UPDATE_ENTROU_MANUTENCAO:-}" ]; }; then
+    [ -n "${DESKCOMM_AGENT_REPORT:-}" ] && eval "${DESKCOMM_AGENT_REPORT_CMD}" rollback
     c_ylw "Falha detectada: restaurando o estado anterior desta atualização..."
 
     if [ -n "${BANCO_PODE_TER_MUDADO:-}" ]; then

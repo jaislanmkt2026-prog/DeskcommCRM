@@ -8,6 +8,7 @@ vi.mock("@/lib/env", () => ({ env: { INTERNAL_SECRET: "segredo-de-teste", INTERN
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
 
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
+const CRIVO_FP = "a".repeat(64);
 
 function req(body: unknown, secret = "segredo-de-teste") {
   return new NextRequest("http://localhost/api/v1/system/agent", {
@@ -29,6 +30,8 @@ const HEARTBEAT = {
 /** Estado do banco simulado, controlado por caso. */
 let versionRow: Record<string, unknown>;
 let runRow: Record<string, unknown> | null;
+let controlState: Record<string, unknown> | null;
+let checkRow: Record<string, unknown> | null;
 /** Erro a devolver em toda leitura (`maybeSingle`) de `system_update_runs` neste caso. */
 let runReadError: { message: string } | null;
 /** Erro a devolver no `update()` de uma tabela específica neste caso. */
@@ -49,11 +52,24 @@ function lastUpdate(table: string) {
   return [...updates].reverse().find((u) => u.table === table) ?? null;
 }
 
+function dispatchedRun() {
+  return {
+    id: RUN_ID,
+    status: "dispatched",
+    dispatched_at: new Date().toISOString(),
+    crivo_environment: "staging",
+    change_fingerprint: CRIVO_FP,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 
   versionRow = { id: 1, update_requested_at: null, update_requested_by: null };
   runRow = null;
+  controlState = { crivo_environment: "staging", kill_switch: false, change_fingerprint: CRIVO_FP };
+  checkRow = { id: "check-1", events: [] };
+  process.env.CRIVO_ENVIRONMENT = "staging";
   runReadError = null;
   updateErrorByTable = {};
   rodadaWriteError = null;
@@ -61,18 +77,22 @@ beforeEach(() => {
 
   vi.mocked(createAdminClient).mockReturnValue({
     from: (table: string) => {
-      const maybeSingle = async () => ({
-        data: table === "system_version" ? versionRow : runRow,
-        error: table === "system_update_runs" ? runReadError : null,
-      });
+      const maybeSingle = async () => {
+        if (table === "system_version") return { data: versionRow, error: null };
+        if (table === "system_upstream_state") return { data: controlState, error: null };
+        if (table === "system_upstream_checks") return { data: checkRow, error: null };
+        return { data: runRow, error: table === "system_update_runs" ? runReadError : null };
+      };
+      const order = () => ({ limit: () => ({ maybeSingle }) });
       return {
         select: () => ({
           eq: () => ({
             maybeSingle,
             // Composição real usada pelo lookup do run pendente no heartbeat:
             // select().eq("status","dispatched").order(...).limit(1).maybeSingle().
-            order: () => ({ limit: () => ({ maybeSingle }) }),
+            order,
           }),
+          order,
         }),
         update: (patch: Record<string, unknown>) => ({
           eq: async () => {
@@ -129,11 +149,38 @@ describe("POST /api/v1/system/agent", () => {
   });
 
   it("heartbeat responde a ordem pendente e devolve o run", async () => {
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     const { POST } = await import("./route");
     const body = await (await POST(req(HEARTBEAT))).json();
     expect(body.data.update_requested).toBe(true);
     expect(body.data.run_id).toBe(RUN_ID);
+  });
+
+  it("kill switch bloqueia um run já despachado antes de o host executá-lo", async () => {
+    controlState = { ...controlState, kill_switch: true };
+    runRow = dispatchedRun();
+    const { POST } = await import("./route");
+    const body = await (await POST(req(HEARTBEAT))).json();
+    expect(body.data.update_requested).toBe(false);
+    expect(body.data.run_id).toBeNull();
+  });
+
+  it("ambiente ausente falha fechado e não entrega o run ao host", async () => {
+    delete process.env.CRIVO_ENVIRONMENT;
+    runRow = dispatchedRun();
+    const { POST } = await import("./route");
+    const body = await (await POST(req(HEARTBEAT))).json();
+    expect(body.data.update_requested).toBe(false);
+    expect(body.data.run_id).toBeNull();
+  });
+
+  it("fingerprint diferente do estado atual não entrega run antigo", async () => {
+    controlState = { ...controlState, change_fingerprint: "b".repeat(64) };
+    runRow = dispatchedRun();
+    const { POST } = await import("./route");
+    const body = await (await POST(req(HEARTBEAT))).json();
+    expect(body.data.update_requested).toBe(false);
+    expect(body.data.run_id).toBeNull();
   });
 
   it("o run em 'dispatched' basta como pedido — nenhum flag em system_version porteia", async () => {
@@ -143,7 +190,7 @@ describe("POST /api/v1/system/agent", () => {
     // 200, a tela mostrava a barra de passos por 15 minutos e o agente nunca
     // via o pedido. Este caso é exatamente esse estado: run criado, flag não.
     versionRow = { id: 1, update_requested_at: null, update_requested_by: null };
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     const { POST } = await import("./route");
     const body = await (await POST(req(HEARTBEAT))).json();
     expect(body.data.update_requested).toBe(true);
@@ -200,7 +247,7 @@ describe("POST /api/v1/system/agent", () => {
   });
 
   it("run_progress grava o passo sem encerrar o run", async () => {
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     const { POST } = await import("./route");
     const res = await POST(req({ kind: "run_progress", run_id: RUN_ID, step: "banco" }));
     expect(res.status).toBe(200);
@@ -208,17 +255,41 @@ describe("POST /api/v1/system/agent", () => {
     expect(lastUpdate("system_update_runs")?.status).toBeUndefined();
   });
 
+  it("progresso real do host registra lifecycle de backup e rollback no canal existente", async () => {
+    runRow = dispatchedRun();
+    const { POST } = await import("./route");
+
+    expect((await POST(req({ kind: "run_progress", run_id: RUN_ID, step: "backup" }))).status).toBe(200);
+    expect(lastUpdate("system_upstream_checks")?.events).toContain("backup_started");
+
+    checkRow = { id: "check-1", events: ["backup_started"] };
+    expect((await POST(req({ kind: "run_progress", run_id: RUN_ID, step: "codigo" }))).status).toBe(200);
+    expect(lastUpdate("system_upstream_checks")?.events).toContain("backup_completed");
+
+    checkRow = { id: "check-1", events: ["backup_started", "backup_completed"] };
+    expect((await POST(req({ kind: "run_progress", run_id: RUN_ID, step: "rollback" }))).status).toBe(200);
+    expect(lastUpdate("system_upstream_checks")?.events).toContain("rollback_started");
+  });
+
   it("run_progress quando o update falha → 500", async () => {
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     updateErrorByTable.system_update_runs = { message: "conexão caiu" };
     const { POST } = await import("./route");
     const res = await POST(req({ kind: "run_progress", run_id: RUN_ID, step: "banco" }));
     expect(res.status).toBe(500);
   });
 
+  it("failed_rolled_back registra rollback_completed no lifecycle", async () => {
+    runRow = dispatchedRun();
+    const { POST } = await import("./route");
+    const res = await POST(req({ kind: "run_result", run_id: RUN_ID, status: "failed_rolled_back", log_tail: "rollback ok" }));
+    expect(res.status).toBe(200);
+    expect(lastUpdate("system_upstream_checks")?.events).toContain("rollback_completed");
+  });
+
   it("run_result encerra o run e audita o desfecho, sem tocar em system_version", async () => {
     const { audit } = await import("@/lib/audit");
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     const { POST } = await import("./route");
     const res = await POST(req({ kind: "run_result", run_id: RUN_ID, status: "success", log_tail: "ok" }));
     expect(res.status).toBe(200);
@@ -238,7 +309,7 @@ describe("POST /api/v1/system/agent", () => {
     // opcionais chegavam `undefined` e as colunas eram gravadas NULAS em toda
     // rodada — a tela calada para sempre, que é o silêncio que este PR veio
     // eliminar. Este caso alimenta o corpo LITERAL que o kit monta agora.
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     const { POST } = await import("./route");
     const res = await POST(
       req({
@@ -268,7 +339,7 @@ describe("POST /api/v1/system/agent", () => {
     // número: na mesma escrita do `status`, isso virava 500, o `post` do agente
     // recebia vazio e o run ficava preso em `dispatched` para sempre.
     rodadaWriteError = { message: "column system_update_runs.passada_do_banco does not exist" };
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     const { POST } = await import("./route");
     const res = await POST(
       req({
@@ -309,7 +380,7 @@ describe("POST /api/v1/system/agent", () => {
 
   it("run_result quando falha ao finalizar o run → 500, sem limpar o pedido e sem auditoria", async () => {
     const { audit } = await import("@/lib/audit");
-    runRow = { id: RUN_ID, status: "dispatched", dispatched_at: new Date().toISOString() };
+    runRow = dispatchedRun();
     updateErrorByTable.system_update_runs = { message: "conexão caiu" };
     const { POST } = await import("./route");
     const res = await POST(req({ kind: "run_result", run_id: RUN_ID, status: "success", log_tail: "ok" }));

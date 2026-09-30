@@ -13,6 +13,7 @@ import { audit } from "@/lib/audit";
 import { loadAuthUser } from "@/lib/auth/server";
 import { logger } from "@/lib/logger";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveCrivoEnvironment } from "@/lib/system/crivo-control";
 import { isRunStale } from "@/lib/system/update-run";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,30 @@ export async function POST(_req: NextRequest): Promise<Response> {
 
   if (!latest || latest === current) {
     return fail("state_conflict", "Você já está na versão mais recente.", 409);
+  }
+
+  const environment = resolveCrivoEnvironment();
+  if (!environment.ok) {
+    return fail("state_conflict", "CRIVO_ENVIRONMENT está ausente ou inválido; atualização bloqueada.", 409);
+  }
+
+  const { data: crivoState, error: crivoStateError } = await db
+    .from("system_upstream_state")
+    .select("crivo_environment,kill_switch,change_fingerprint")
+    .eq("id", 1)
+    .maybeSingle();
+  if (crivoStateError || !crivoState) {
+    logger.error("[system/update] leitura do estado do Crivo falhou", { error: crivoStateError?.message });
+    return fail("internal_error", "Não consegui ler os controles do Crivo.", 500);
+  }
+  if (crivoState.kill_switch) {
+    return fail("state_conflict", "Crivo está bloqueado pelo kill switch.", 409);
+  }
+  if (crivoState.crivo_environment !== environment.environment) {
+    return fail("state_conflict", "O ambiente do Crivo não confere com esta instalação.", 409);
+  }
+  if (!crivoState.change_fingerprint) {
+    return fail("state_conflict", "O Crivo ainda não registrou a mudança que será aplicada.", 409);
   }
 
   const { data: running } = await db
@@ -93,11 +118,13 @@ export async function POST(_req: NextRequest): Promise<Response> {
     }
   }
 
-  const { data: run, error } = await db
-    .from("system_update_runs")
-    .insert({ from_version: current, to_version: latest, status: "dispatched", requested_by: user.id })
-    .select()
-    .single();
+  const { data: runId, error } = await db.rpc("fn_crivo_dispatch_update", {
+    p_from_version: current,
+    p_to_version: latest,
+    p_requested_by: user.id,
+    p_fingerprint: crivoState.change_fingerprint,
+    p_environment: environment.environment,
+  });
 
   if (error) {
     // A preparação de extensão e a atualização dividem a mesma cerca no
@@ -118,11 +145,24 @@ export async function POST(_req: NextRequest): Promise<Response> {
     if (error.code === "23505") {
       return fail("state_conflict", RUN_IN_PROGRESS_MESSAGE, 409);
     }
-    logger.error("[system/update] insert do run falhou", { error: error.message });
+    if (error.code === "P0001") {
+      const crivoErrors: Record<string, string> = {
+        crivo_killed: "Crivo está bloqueado pelo kill switch.",
+        crivo_environment_invalid: "CRIVO_ENVIRONMENT está ausente ou inválido; atualização bloqueada.",
+        crivo_environment_mismatch: "O ambiente do Crivo não confere com esta instalação.",
+        crivo_change_mismatch: "A mudança do Crivo mudou; analise novamente antes de atualizar.",
+        crivo_analysis_incomplete: "A análise do Crivo precisa estar completa antes de atualizar.",
+        crivo_approval_required: "Produção exige aprovação específica para esta mudança.",
+        crivo_state_missing: "Estado do Crivo não encontrado.",
+      };
+      const message = crivoErrors[error.message];
+      if (message) return fail("state_conflict", message, 409);
+    }
+    logger.error("[system/update] despacho do run falhou", { error: error.message });
     return fail("internal_error", "Não consegui registrar o pedido de atualização.", 500);
   }
 
-  if (!run) {
+  if (!runId || typeof runId !== "string") {
     return fail("internal_error", "Não consegui registrar o pedido de atualização.", 500);
   }
 
@@ -137,10 +177,10 @@ export async function POST(_req: NextRequest): Promise<Response> {
     action: "system.update_requested",
     actorUserId: user.id,
     resourceType: "system_update_run",
-    resourceId: run.id,
+    resourceId: runId,
     metadata: { from_version: current, to_version: latest },
     actingAsPlatformAdmin: true,
   });
 
-  return ok({ run_id: run.id, to_version: latest });
+  return ok({ run_id: runId, to_version: latest });
 }

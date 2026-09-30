@@ -375,6 +375,7 @@ elif [ $RC -eq "$UPDATE_ROLLBACK_FAILED_RC" ]; then
 elif [ $RC -ne 0 ]; then
   STATUS="failed"
   if [ -n "$PREV_IMAGE" ]; then
+    report rollback
     # Os serviços que temos como voltar. Worker e scheduler entram só se o
     # `images -q` deles respondeu: numa instalação que ainda não tinha as
     # imagens novas, voltar o app sozinho continua sendo o comportamento certo,

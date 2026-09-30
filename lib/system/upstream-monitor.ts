@@ -1,4 +1,10 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
+import {
+  fingerprintCrivoChange,
+  hasValidCrivoApproval,
+  resolveCrivoEnvironment,
+  sanitizeCrivoText,
+} from "@/lib/system/crivo-control";
 
 export const INTERVALO_CRIVO_MS = 6 * 60 * 60 * 1000;
 export const RETENCAO_HISTORICO_DIAS = 90;
@@ -122,6 +128,13 @@ interface EstadoAnterior {
   risk_level?: NivelRisco | null;
   analysis_status?: string | null;
   analysis_summary?: unknown;
+  crivo_environment?: string | null;
+  kill_switch?: boolean | null;
+  change_fingerprint?: string | null;
+  approval_fingerprint?: string | null;
+  approval_approved_by?: string | null;
+  approval_approved_at?: string | null;
+  approval_consumed_at?: string | null;
 }
 
 interface GitHubRepo {
@@ -222,15 +235,9 @@ export function resolverReferenciaFork(env: AmbienteCrivo = process.env): Refere
 }
 
 function sanitizarErro(error: unknown): string {
-  const raw = error instanceof CrivoUpstreamError
-    ? error.message
-    : error instanceof Error
-      ? error.message
-      : "Falha desconhecida na verificação do upstream.";
-  return raw
-    .replace(/https?:\/\/[^\s]+/gi, "[url]")
-    .replace(/(token|secret|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
-    .slice(0, 500);
+  return sanitizeCrivoText(
+    error instanceof CrivoUpstreamError ? error.message : error,
+  );
 }
 
 function espera(ms: number): Promise<void> {
@@ -613,7 +620,7 @@ export async function executarCrivoUpstream(options?: {
   const { data: previous, error: stateError } = await db
     .from("system_upstream_state")
     .select(
-      "local_commit,last_seen_commit,latest_upstream_commit,last_seen_tag,last_seen_release,risk_level,analysis_status,analysis_summary",
+      "local_commit,last_seen_commit,latest_upstream_commit,last_seen_tag,last_seen_release,risk_level,analysis_status,analysis_summary,crivo_environment,kill_switch,change_fingerprint,approval_fingerprint,approval_approved_by,approval_approved_at,approval_consumed_at",
     )
     .eq("id", 1)
     .maybeSingle();
@@ -633,10 +640,42 @@ export async function executarCrivoUpstream(options?: {
   if (startError || !check) throw new Error(`system_upstream_checks: ${startError?.message ?? "sem id"}`);
 
   const previousState = (previous ?? {}) as EstadoAnterior;
+  const environment = resolveCrivoEnvironment(options?.env ?? process.env);
+  const environmentMismatch =
+    environment.ok &&
+    Boolean(previousState.crivo_environment) &&
+    previousState.crivo_environment !== environment.environment;
+  if (!environment.ok || environmentMismatch || previousState.kill_switch) {
+    const reason = previousState.kill_switch
+      ? "Crivo bloqueado pelo kill switch."
+      : environmentMismatch
+        ? "CRIVO_ENVIRONMENT diverge do ambiente registrado."
+        : "CRIVO_ENVIRONMENT ausente ou inválido.";
+    const events = [
+      "UPSTREAM_CHECK_STARTED",
+      previousState.kill_switch ? "killed" : "blocked",
+      "failed",
+    ];
+    await db.from("system_upstream_checks").update({
+      finished_at: now.toISOString(),
+      result: "failed",
+      analysis_status: "failed",
+      events,
+      error: reason,
+    }).eq("id", check.id);
+    await podarHistorico(db, now);
+    return { result: "failed", analysis_status: "failed", error: reason };
+  }
+
   let descobertaAtual: DescobertaUpstream | null = null;
   try {
     const descoberta = await descobrirUpstream(fetchImpl, options?.env ?? process.env);
     descobertaAtual = descoberta;
+    const fingerprint = fingerprintCrivoChange({
+      forkCommit: descoberta.forkCommit,
+      upstreamCommit: descoberta.upstreamCommit,
+    });
+    const fingerprintChanged = previousState.change_fingerprint !== fingerprint;
     const sameSnapshot = !snapshotMudou(previousState, descoberta);
 
     if (sameSnapshot) {
@@ -653,6 +692,16 @@ export async function executarCrivoUpstream(options?: {
           next_check_at: next.toISOString(),
           update_available: descoberta.commitsBehind > 0,
           commits_behind: descoberta.commitsBehind,
+          crivo_environment: environment.environment,
+          change_fingerprint: fingerprint,
+          ...(fingerprintChanged
+            ? {
+                approval_fingerprint: null,
+                approval_approved_by: null,
+                approval_approved_at: null,
+                approval_consumed_at: null,
+              }
+            : {}),
           updated_at: now.toISOString(),
         });
       await db
@@ -675,9 +724,25 @@ export async function executarCrivoUpstream(options?: {
 
     const analysis = await analisarUpstream(descoberta, fetchImpl);
     const complete = analysis.status === "completed";
-    const events = ["UPSTREAM_CHECK_STARTED", "UPSTREAM_CHECK_OK"];
-    if (descoberta.commitsBehind > 0) events.push("UPSTREAM_UPDATE_DETECTED");
+    const events = ["UPSTREAM_CHECK_STARTED", "UPSTREAM_CHECK_OK", "analyzing"];
+    if (descoberta.commitsBehind > 0) events.push("UPSTREAM_UPDATE_DETECTED", "detected");
     events.push(complete ? "UPDATE_ANALYSIS_COMPLETED" : "UPDATE_ANALYSIS_FAILED");
+    if (
+      complete &&
+      descoberta.commitsBehind > 0 &&
+      environment.environment === "production" &&
+      !hasValidCrivoApproval(
+        {
+          fingerprint: previousState.approval_fingerprint ?? null,
+          approvedBy: previousState.approval_approved_by ?? null,
+          approvedAt: previousState.approval_approved_at ?? null,
+          consumedAt: previousState.approval_consumed_at ?? null,
+        },
+        fingerprint,
+      )
+    ) {
+      events.push("awaiting_approval");
+    }
     const result = descoberta.commitsBehind > 0 ? "update_available" : "no_change";
 
     await db.from("system_upstream_state").upsert({
@@ -697,6 +762,16 @@ export async function executarCrivoUpstream(options?: {
       risk_level: analysis.risk,
       analysis_status: analysis.status,
       analysis_summary: analysis.summary,
+      crivo_environment: environment.environment,
+      change_fingerprint: fingerprint,
+      ...(fingerprintChanged
+        ? {
+            approval_fingerprint: null,
+            approval_approved_by: null,
+            approval_approved_at: null,
+            approval_consumed_at: null,
+          }
+        : {}),
       updated_at: now.toISOString(),
     });
     await db
@@ -749,6 +824,7 @@ export async function executarCrivoUpstream(options?: {
         events: [
           "UPSTREAM_CHECK_STARTED",
           incomplete ? "UPDATE_ANALYSIS_FAILED" : "UPSTREAM_CHECK_FAILED",
+          "failed",
         ],
         error: sanitized,
       })

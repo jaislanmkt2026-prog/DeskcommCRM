@@ -36,3 +36,73 @@ describe("/api/v1/system/upstream", () => {
     expect(executarCrivoUpstream).not.toHaveBeenCalled();
   });
 });
+
+
+function adminParaApprove(options?: { analysisStatus?: string; approvalRow?: { id: number } | null }) {
+  const state = {
+    crivo_environment: "production",
+    kill_switch: false,
+    change_fingerprint: "a".repeat(64),
+    analysis_status: options?.analysisStatus ?? "completed",
+  };
+  return {
+    from(table: string) {
+      type MockQuery = {
+        __updated?: boolean;
+        select: () => MockQuery;
+        eq: () => MockQuery;
+        update: () => MockQuery;
+        order: () => MockQuery;
+        limit: () => MockQuery;
+        maybeSingle: () => Promise<{ data: unknown; error: null }>;
+      };
+      const query = {} as MockQuery;
+      query.select = () => query;
+      query.eq = () => query;
+      query.update = () => {
+        query.__updated = true;
+        return query;
+      };
+      query.order = () => query;
+      query.limit = () => query;
+      query.maybeSingle = async () => ({
+        data: table === "system_upstream_state" && query.__updated
+          ? (options?.approvalRow === undefined ? { id: 1 } : options.approvalRow)
+          : table === "system_upstream_state" ? state : null,
+        error: null,
+      });
+      return query;
+    },
+  };
+}
+
+describe("approval gate da Missão 7.6", () => {
+  beforeEach(() => {
+    vi.stubEnv("CRIVO_ENVIRONMENT", "production");
+    vi.mocked(loadAuthUser).mockResolvedValue({ id: "owner", is_platform_admin: true } as never);
+  });
+
+  it("recusa aprovação quando a análise ainda não terminou", async () => {
+    vi.mocked(createAdminClient).mockReturnValue(adminParaApprove({ analysisStatus: "incomplete" }) as never);
+    const { POST } = await import("@/app/api/v1/system/upstream/route");
+    const response = await POST(new NextRequest("http://localhost/api/v1/system/upstream", {
+      method: "POST",
+      body: JSON.stringify({ action: "approve" }),
+      headers: { "content-type": "application/json" },
+    }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.message).toContain("análise do Crivo precisa estar completa");
+  });
+
+  it("não responde sucesso se o fingerprint mudar durante a aprovação", async () => {
+    vi.mocked(createAdminClient).mockReturnValue(adminParaApprove({ approvalRow: null }) as never);
+    const { POST } = await import("@/app/api/v1/system/upstream/route");
+    const response = await POST(new NextRequest("http://localhost/api/v1/system/upstream", {
+      method: "POST",
+      body: JSON.stringify({ action: "approve" }),
+      headers: { "content-type": "application/json" },
+    }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.message).toContain("mudou");
+  });
+});
