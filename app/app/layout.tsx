@@ -15,6 +15,8 @@ import { resolverMarcaDaOrganizacao } from "@/lib/branding/organizacao";
 import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { modulosLigados } from "@/lib/instalacao/modulos";
+import { capacidadesLigadas } from "@/lib/organizacao/capacidades";
+import { ehOperante } from "@/lib/organizacao/operante";
 import {
   ImpersonateBanner,
 } from "@/components/app/ImpersonateBanner";
@@ -107,12 +109,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ]);
 
     const orgRow = orgRes.data;
+    // Erro de leitura LANÇA: `orgRow` nulo passava por "sem onboarding pendente
+    // e não suspensa" e renderizava a casca de uma org que ninguém conseguiu ler.
+    if (orgRes.error) {
+      throw new Error(`organizacao_ilegivel: ${orgRes.error.message}`);
+    }
     conexoesCaidas = conexoes;
     enrolled = isEnrolled;
     needsMfaGate = mfaRequired;
 
+    // Suspensão ANTES de onboarding: a org suspensa que nunca terminou o
+    // onboarding ia para `/onboarding` e escapava da tela da suspensão.
+    if (!ehOperante(orgRow?.status)) redirect("/account-suspended");
     if (orgRow && !orgRow.onboarded_at && !user.support) redirect("/onboarding");
-    if (orgRow?.status === "suspended") redirect("/account-suspended");
     // G4-02: expõe visibility_mode ao client (inbox decide visões visíveis).
     // Fonte confiável (admin client, org do cookie validado) — nunca do body.
     const mode = (orgRow?.settings as { visibility_mode?: VisibilityMode } | null)
@@ -123,6 +132,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       // Mesma linha de `settings` já lida acima — nenhuma consulta a mais.
       cliente_pela_agenda: clientePelaAgendaLigado(orgRow?.settings),
       modulos_ligados: modulos,
+      // Mesma linha de `settings` já lida acima — nenhuma consulta a mais.
+      capacidades_ligadas: capacidadesLigadas(orgRow?.settings, modulos),
     };
 
     // `marcaDaInstalacao()` é memoizada por TTL no PROCESSO (`lib/branding/

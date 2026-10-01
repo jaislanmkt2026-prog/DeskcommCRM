@@ -337,6 +337,15 @@ const PARES: Array<{
     simbolo: "CASE_CHAT_AUTHOR_KINDS",
   },
   {
+    tabela: "knowledge_searches",
+    coluna: "author_kind",
+    // lib/ai/knowledge/busca.ts → KNOWLEDGE_SEARCH_AUTHOR_KINDS (tupla `as const`).
+    // Nasce com a migration 0484 (#1877): a rota da caixa "Acervo" grava
+    // `'human'` e a Evolução separa as séries por esta coluna.
+    arquivo: "lib/ai/knowledge/busca.ts",
+    simbolo: "KNOWLEDGE_SEARCH_AUTHOR_KINDS",
+  },
+  {
     tabela: "passagens_de_atendimento",
     coluna: "motor",
     // lib/escalacao/passagem.ts → MOTORES_DA_PASSAGEM (tupla `as const`, como
@@ -412,6 +421,18 @@ const PARES: Array<{
     // nasce com o par no mesmo commit da migration — a lição desta lista.
     arquivo: "lib/schemas/team.ts",
     simbolo: "ROLES",
+  },
+  {
+    tabela: "organizations",
+    coluna: "suspended_kind",
+    // lib/organizacao/operante.ts → TIPOS_DE_SUSPENSAO (tupla `as const`). Nasce
+    // no MESMO commit da migration 0501 — a lição desta lista. O tipo decide qual
+    // porta reativa: `/reactivate` só a administrativa; a de cobrança só por
+    // pagamento, prazo ou isenção. Um tipo só no CHECK deixaria a org presa numa
+    // suspensão que nenhuma porta reconhece; só no TypeScript viraria `23514`
+    // dentro de fn_suspender_organizacao.
+    arquivo: "lib/organizacao/operante.ts",
+    simbolo: "TIPOS_DE_SUSPENSAO",
   },
 ];
 

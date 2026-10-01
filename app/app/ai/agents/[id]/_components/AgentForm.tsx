@@ -74,6 +74,7 @@ import type { AgentVersionRow } from "@/hooks/ai/useAgentVersions";
 import type { CredentialRow, Provider } from "@/hooks/ai/useCredentials";
 import { credentialStatus } from "@/hooks/ai/useCredentials";
 import type { FunilDaResposta } from "@/hooks/pipelines/usePipelines";
+import { callbacksHabilitados } from "@/lib/followup/callback-policy";
 
 /**
  * O canal oferecido no seletor é exatamente o que `listSelectableChannels`
@@ -179,9 +180,12 @@ interface FormState {
   history_token_window: number;
   handoff_keywords: string[];
   handoff_tool_enabled: boolean;
+  proposal_ai_draft_enabled: boolean;
   cases_enabled: boolean;
   split_messages: boolean;
   split_max_chars: number;
+  /** Janela de rajada (ms) do agente. `null` = usa a env da instalação. */
+  inbound_debounce_ms: number | null;
   followup: FollowupValue;
   // Papel OPERADOR (spec 16 §3.2) — o que mexe no sistema depois da conversa.
   operator_enabled: boolean;
@@ -195,6 +199,7 @@ interface FormState {
 interface FollowupValue {
   enabled: boolean;
   flow_pointer_ids: string[];
+  callback_enabled: boolean;
   /** Ausente em versões antigas; null = sem janela própria. */
   send_window?: FollowupWindowValue | null;
 }
@@ -203,6 +208,7 @@ const DEFAULT_FOLLOWUP: FollowupValue = {
   enabled: false,
   flow_pointer_ids: [],
   send_window: null,
+  callback_enabled: true,
 };
 
 const DEFAULT_TRIGGER: TriggerValue = {
@@ -276,10 +282,18 @@ export function buildState(args: {
       "pessoa real",
     ],
     handoff_tool_enabled: version?.handoff_tool_enabled ?? true,
+    proposal_ai_draft_enabled: version?.proposal_ai_draft_enabled ?? true,
     cases_enabled: version?.cases_enabled ?? false,
     split_messages: version?.split_messages ?? false,
     split_max_chars: version?.split_max_chars ?? 600,
-    followup: version?.followup ?? DEFAULT_FOLLOWUP,
+    inbound_debounce_ms: version?.inbound_debounce_ms ?? null,
+    followup: version?.followup
+      ? {
+          ...DEFAULT_FOLLOWUP,
+          ...version.followup,
+          callback_enabled: callbacksHabilitados(version.followup),
+        }
+      : DEFAULT_FOLLOWUP,
     operator_enabled: version?.operator_enabled ?? false,
     // O form usa "" onde o banco usa null — Select controlado não aceita null.
     // A conversão de volta acontece em `toVersionPayload`, num ponto só.
@@ -332,9 +346,11 @@ function toVersionPayload(s: FormState) {
     history_token_window: s.history_token_window,
     handoff_keywords: s.handoff_keywords,
     handoff_tool_enabled: s.handoff_tool_enabled,
+    proposal_ai_draft_enabled: s.proposal_ai_draft_enabled,
     cases_enabled: s.cases_enabled,
     split_messages: s.split_messages,
     split_max_chars: s.split_max_chars,
+    inbound_debounce_ms: s.inbound_debounce_ms,
     followup: s.followup,
     operator_enabled: s.operator_enabled,
     // "" (não escolheu) → null (herda o do Conversador). São o mesmo conceito em
@@ -1048,6 +1064,42 @@ export function AgentForm(props: Props) {
                   disabled={disabled}
                 />
               </div>
+              <div className="col-span-2 space-y-1">
+                <Label htmlFor="inbound_debounce_ms">
+                  {t("Esperar antes de responder (segundos)")}
+                </Label>
+                <Input
+                  id="inbound_debounce_ms"
+                  type="number"
+                  min={0}
+                  max={60}
+                  step={1}
+                  placeholder={t("Vazio = padrão da instalação")}
+                  value={
+                    form.inbound_debounce_ms === null
+                      ? ""
+                      : String(Math.round(form.inbound_debounce_ms / 1000))
+                  }
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    // Vazio = usa a env da instalação (campo null). A UI fala em
+                    // SEGUNDOS; o banco e o worker falam em ms (conversão aqui,
+                    // num ponto só). Teto de 60s no campo espelha o do worker.
+                    patch({
+                      inbound_debounce_ms:
+                        raw === ""
+                          ? null
+                          : Math.round(Math.max(0, Math.min(60, Number(raw))) * 1000),
+                    });
+                  }}
+                  disabled={disabled}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    "Mensagens do mesmo contato dentro desse tempo viram uma resposta só. Vazio usa a janela padrão da instalação (máximo 60 segundos).",
+                  )}
+                </p>
+              </div>
             </div>
           </Card>
         </div>
@@ -1226,12 +1278,46 @@ export function AgentForm(props: Props) {
             </p>
           </Card>
 
+          {/* Propostas comerciais */}
+          <Card className="space-y-3 p-4">
+            <h3 className="text-sm font-medium">{t("Propostas comerciais")}</h3>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="proposal_ai_draft_enabled"
+                checked={form.proposal_ai_draft_enabled}
+                onCheckedChange={(v) => patch({ proposal_ai_draft_enabled: v })}
+                disabled={disabled}
+              />
+              <Label htmlFor="proposal_ai_draft_enabled">
+                {t("Deixar o agente rascunhar uma proposta quando o cliente pedir orçamento")}
+              </Label>
+            </div>
+          </Card>
+
           {/* Follow-up */}
           <Card className="space-y-3 p-4">
             <h3 className="text-sm font-medium">{t("Follow-up")}</h3>
             <p className="text-xs text-muted-foreground">
               {t(
                 "Retomar sozinho quem parou de responder, para o interessado não sumir sem ninguém perceber.",
+              )}
+            </p>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="callback_enabled"
+                checked={form.followup.callback_enabled}
+                onCheckedChange={(v) =>
+                  patch({ followup: { ...form.followup, callback_enabled: v } })
+                }
+                disabled={disabled}
+              />
+              <Label htmlFor="callback_enabled">
+                {t("Permitir que o agente marque novos retornos por conta própria")}
+              </Label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "Desligar impede novos retornos prometidos pelo agente. Os fluxos configurados abaixo e a consulta ou o cancelamento de retornos existentes continuam disponíveis.",
               )}
             </p>
             <div className="flex items-center gap-2">

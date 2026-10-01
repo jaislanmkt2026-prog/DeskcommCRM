@@ -15,6 +15,10 @@ import type { Role } from "@/lib/auth/types";
 export interface McpContext {
   /** Somente o runtime in-process fornece o job original, nunca o cliente MCP. */
   meetingBooking?: MeetingBookingContext;
+  /** Chave `Idempotency-Key` da requisição MCP externa, quando enviada. */
+  idempotencyKey?: string;
+  /** Job estável do runtime in-process; nunca vem dos argumentos da tool. */
+  sourceJobId?: string;
   organizationId: string;
   role: Role;
   actor: Actor;
@@ -38,6 +42,12 @@ export interface McpToolDefinition<TInput extends z.ZodRawShape = z.ZodRawShape>
    * Ausência → -32002 forbidden.
    */
   requiresScope: "mcp:read" | "mcp:write";
+  /**
+   * Atende token de empresa SUSPENSA (`McpAuthResult.orgSuspensa`). Só a
+   * privacidade (LGPD nunca é bloqueada — decisão do dono, 30/09); a cerca
+   * `tests/unit/org-suspensa-so-nas-rotas-permitidas.test.ts` vigia onde aparece.
+   */
+  permiteOrgSuspensa?: true;
   /**
    * Limpa os args ANTES da auditoria (os dois ingressos: runtime e `/api/mcp`).
    *

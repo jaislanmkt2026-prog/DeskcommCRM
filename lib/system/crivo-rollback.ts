@@ -1,4 +1,4 @@
-/**
+﻿/**
  * P0-C Missão 7.7 — Rollback automático pós-aplicação.
  *
  * Monitora `system_update_runs` com status `dispatched` ou `failed` e executa
@@ -28,7 +28,7 @@ interface RunPendente {
   finished_at: string | null;
   to_version: string | null;
   from_version: string | null;
-  error: string | null;
+  log_tail: string | null;
 }
 
 const TERMINAL: readonly RunStatus[] = ["success", "failed", "failed_rolled_back"];
@@ -102,11 +102,11 @@ export async function executarRollbackSeNecessario(options?: {
     }
 
     try {
-      await marcarRollback(db, run.id, (run as any).log_tail ?? null);
+      await marcarRollback(db, run.id, run.log_tail);
       resultados.push({
         acao: "rolled_back",
         runId: run.id,
-        erroOriginal: (run as any).log_tail ?? undefined,
+        erroOriginal: run.log_tail ?? undefined,
       });
     } catch (err) {
       resultados.push({ acao: "failed", runId: run.id, erro: sanitizeCrivoText(err) });

@@ -165,7 +165,12 @@ describe("fiação — a espera humana é paga UMA vez por turno", () => {
     const janela = FONTE_INBOUND.slice(i, i + 3200);
     // Os dois convivem: o jitter é throttle anti-ban entre mensagens físicas, o
     // atraso humano é a pausa do turno. Perder o primeiro é afrouxar o anti-ban.
-    expect(janela).toMatch(/jitter\s*[:=]\s*\(\)\s*=>\s*1200 \+ Math\.floor\(Math\.random\(\) \* 800\)/);
+    // Desde a 0499 o jitter LÊ os knobs da conexão (throttleMs + jitterMaxMs,
+    // defaults 1200/800) em vez do literal `1200 + rand*800` — mesma proteção,
+    // agora configurável por número.
+    expect(janela).toMatch(/const jitter = \(\) =>/);
+    expect(janela).toMatch(/pacingDoTurno\?\.knobs\.throttleMs \?\? 1200/);
+    expect(janela).toMatch(/Math\.floor\(Math\.random\(\) \* \(pacingDoTurno\?\.knobs\.jitterMaxMs \?\? 800\)\)/);
     expect(janela).toContain("sendInBubbles(texto, {");
     // Issue #654: a pausa humana saiu daqui. Ela era paga no `antesDaPrimeira`, que
     // rodava dentro do callback `send` — isto é, com o `pg_advisory_xact_lock` do

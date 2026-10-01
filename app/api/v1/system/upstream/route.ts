@@ -5,7 +5,7 @@ import { z } from "zod";
 import { fail, ok } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
 import { loadAuthUser } from "@/lib/auth/server";
-import { requireSupportWrite } from "@/lib/impersonate/support";
+import { falhaDaEscritaDePlatformAdmin, requirePlatformAdminEscrita } from "@/lib/auth/requirePlatformAdmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveCrivoEnvironment } from "@/lib/system/crivo-control";
 import { executarCrivoUpstream } from "@/lib/system/upstream-monitor";
@@ -71,11 +71,15 @@ export async function GET(): Promise<Response> {
 
 export async function POST(req: NextRequest): Promise<Response> {
   const requestId = randomUUID();
-  const supportDenied = await requireSupportWrite();
-  if (supportDenied) return supportDenied;
-
   const auth = await adminDaInstalacao();
   if (auth.response) return auth.response;
+  // Aprovar/rejeitar/ligar o kill switch do Crivo é ESCRITA da instalação:
+  // support_readonly e sessão com dívida de MFA não escrevem.
+  try {
+    await requirePlatformAdminEscrita();
+  } catch (err) {
+    return falhaDaEscritaDePlatformAdmin(err, requestId, "Só o administrador da instalação pode operar o Crivo.");
+  }
 
   let body: unknown;
   try {

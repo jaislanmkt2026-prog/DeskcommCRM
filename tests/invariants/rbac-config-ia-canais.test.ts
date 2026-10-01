@@ -184,50 +184,18 @@ describe("0150 — o segredo cifrado some da superfície do browser", () => {
  * cima passando.
  */
 const DIVIDA_RBAC_CONHECIDA = new Set([
-  "agent_cases",
-  "agent_inbox_items",
-  "ai_agent_runs",
-  "ai_invocations",
-  "ai_router_decisions",
-  "before_send_traces",
-  "channel_knobs",
-  "channel_session_health",
-  "channel_session_warmup",
-  "contact_field_proposals",
-  "contacts",
-  "crm_lead_reactivations",
-  "crm_lead_risk_states",
-  "crm_lead_scores",
-  "cron_jobs",
-  "demanda_conversas",
-  "demandas",
-  "disclosure_template_pointers",
-  "disclosure_template_versions",
-  "flywheel_distiller_proposals",
-  "flywheel_judge_verdicts",
-  "followup_enrollment_events",
-  "followup_enrollments",
-  "followup_flow_pointers",
-  "followup_flow_versions",
-  "idempotency_keys",
-  "incidents",
-  "job_queue",
-  "judge_alignment_pool",
-  "knowledge_searches",
-  "lead_checkpoints",
-  "lead_notes",
-  "lead_state",
-  "lead_state_transitions",
-  "llm_calls",
-  "meta_templates",
-  "metrics",
-  "nuvemshop_products",
-  "orders",
-  "org_memory_entries",
-  "org_memory_pointers",
-  "org_memory_versions",
-  "organizations",
-  "outbound_copies",
+  "agent_cases", "agent_inbox_items", "ai_agent_runs",
+  "ai_invocations", "ai_router_decisions",
+  "before_send_traces", "channel_knobs", "channel_session_health", "channel_session_warmup",
+  "contact_field_proposals", "contacts", "crm_lead_reactivations", "crm_lead_risk_states",
+  "crm_lead_scores", "cron_jobs", "demanda_conversas", "demandas",
+  "disclosure_template_pointers", "disclosure_template_versions",
+  "flywheel_distiller_proposals", "flywheel_judge_verdicts",
+  "followup_enrollments", "followup_flow_pointers",
+  "idempotency_keys", "incidents", "job_queue", "judge_alignment_pool", "knowledge_searches",
+  "lead_checkpoints", "lead_notes", "lead_state", "lead_state_transitions", "llm_calls",
+  "meta_templates", "metrics", "nuvemshop_products", "orders", "org_memory_entries",
+  "org_memory_pointers", "org_memory_versions", "organizations", "outbound_copies",
   "pacing_ledger",
   // phone_numbers (SIP module, #677): a leitura/escrita e org-scoped, mas o
   // segundo eixo (so agent+ resolve numero, so manager+ configura roteamento)
@@ -264,10 +232,10 @@ describe("0150 — a dívida de RBAC não cresce", () => {
       // As quatro do acervo entraram na 0181, pelo mesmo motivo e no mesmo
       // formato: um `viewer` DELETAVA `ai_chunks` da própria organização
       // falando direto com o PostgREST, com o JWT dele.
-      "ai_knowledge_sources",
-      "ai_knowledge_versions",
-      "ai_chunks",
-      "ai_faq_items",
+      "ai_knowledge_sources", "ai_knowledge_versions", "ai_chunks", "ai_faq_items",
+      // A trilha e as versões de follow-up saíram da dívida na 0490 (#1915): o
+      // par de casos está em followup-trilha-e-versoes-rls-por-operacao.test.ts.
+      "followup_enrollment_events", "followup_flow_versions",
     ];
     const semRole = sql(`
       select coalesce(string_agg(distinct tablename, ','), '') from pg_policies

@@ -86,6 +86,10 @@ export interface HandlerCtx {
   toolReceipts?: ToolReceipt[];
   /** Origem de evento derivado; não é campo de input público. */
   serviceOrigin?: ServiceOrigin;
+  /** Chave HTTP validada na borda para replay de uma criação. */
+  idempotencyKey?: string;
+  /** Identidade estável do job interno; não usar claim, que muda em cada reclaim. */
+  sourceJobId?: string;
   organization_id: string;
   actor: Actor;
   /**

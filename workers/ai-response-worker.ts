@@ -22,7 +22,7 @@ import { generateText, type LanguageModel } from "ai";
 
 import { DEFAULT_BOT_MODEL, gatewayConfig, gatewayHeaders } from "@/lib/ai/gateway";
 import { embedText } from "@/lib/ai/embed";
-import { MODELO_DE_EMBEDDING } from "@/lib/ai/embeddings/chave";
+import { MODELO_DE_EMBEDDING_DO_GOOGLE } from "@/lib/ai/embeddings/chave";
 import { getBudgetStatus, type BudgetStatus } from "@/lib/ai/budget/check";
 import {
   AVISO_CORPO,
@@ -730,10 +730,12 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
   // O agente legado desta organização.
   //
   // `is_active` sozinho NÃO é "quem atende", e tratá-lo como se fosse era o
-  // buraco: pausar um `mcp_agent` limpa `published_version_id` e deixa
+  // buraco: pausar um `mcp_agent` limpava `published_version_id` e deixava
   // `is_active` de pé, então este SELECT continuava trazendo o agente que o dono
   // acabara de pausar — e a trava `engine_owns_reply` logo abaixo, que é
-  // ORG-WIDE, deixa de valer exatamente quando o último publicado é pausado.
+  // ORG-WIDE, deixava de valer exatamente quando o último publicado era pausado.
+  // (Hoje pausar grava só `paused_at` e a versão segue publicada; a régua lê a
+  // pausa, e não depende de qual das duas formas a pausa tem.)
   // Resultado medido em produção: pausar o agente o fazia VOLTAR a responder,
   // com o `system_prompt` do cadastro no lugar do da versão publicada.
   //
@@ -923,12 +925,14 @@ async function retrieveContext(input: RetrieveInput): Promise<RagHit[]> {
   if (fontes.length === 0 && !input.kbVersionId) return [];
 
   let embedding: number[];
+  let modelo: string;
   try {
-    const { embedding: e } = await embedText(input.query, {
+    const { embedding: e, model } = await embedText(input.query, {
       organizationId: input.organizationId,
       ponto: "embedding_consultar",
     });
     embedding = e;
+    modelo = model;
   } catch (err) {
     logger.warn("[ai-response-worker] embed falhou; segue sem RAG", {
       error: err instanceof Error ? err.message : String(err),
@@ -947,10 +951,13 @@ async function retrieveContext(input: RetrieveInput): Promise<RagHit[]> {
             p_embedding: embedding as unknown as string,
             p_k: RAG_TOP_K,
             p_threshold: RAG_THRESHOLD,
-            p_embedding_model: MODELO_DE_EMBEDDING,
+            p_embedding_model: modelo,
           } as never,
         )
-      : await admin.rpc(
+      : modelo === MODELO_DE_EMBEDDING_DO_GOOGLE
+        ? // Legado sem filtro de modelo e só com vetores OpenAI (ver search-knowledge.ts).
+          { data: [], error: null }
+        : await admin.rpc(
           "retrieve_top_k_chunks" as never,
           {
             p_organization_id: input.organizationId,
