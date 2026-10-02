@@ -248,6 +248,15 @@ export const NAV_CATALOG = [
     sidebar: true,
   },
   {
+    href: "/app/leads",
+    label: "Leads",
+    description: "As oportunidades que você decidiu trabalhar, com origem e etiquetas.",
+    icon: "Users",
+    group: "crm",
+    section: "O dia a dia da venda",
+    sidebar: false,
+  },
+  {
     href: "/app/companies",
     label: "Empresas",
     description: "Cadastro B2B — razão social, CNPJ e decisores.",
