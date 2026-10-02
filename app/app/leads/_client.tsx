@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -34,6 +34,13 @@ interface RespostaLeads {
 const SELECT_CLASSE =
   "h-9 rounded-md border border-border bg-surface-elevated px-2 text-sm text-text";
 
+function linkDoWhatsapp(telefone: string | null | undefined): string | null {
+  const digitos = (telefone ?? "").replace(/\D/g, "");
+  return digitos.length >= 8 ? `https://wa.me/${digitos}` : null;
+}
+
+const NOVA_ORIGEM = "__nova__";
+
 function quando(valor: string): string {
   const d = new Date(valor);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
@@ -47,6 +54,23 @@ export function LeadsClient() {
   const [tag, setTag] = useState("");
   const [funil, setFunil] = useState("");
   const [pagina, setPagina] = useState(1);
+  const [marcados, setMarcados] = useState<string[]>([]);
+  const [painel, setPainel] = useState(false);
+  const [escolha, setEscolha] = useState("");
+  const [nova, setNova] = useState("");
+  const queryClient = useQueryClient();
+
+  const alterar = useMutation({
+    mutationFn: (corpo: { ids: string[]; origem: string }) =>
+      apiClient.patch<{ data: { alterados: number } }>("/api/v1/leads/lista", corpo),
+    onSuccess: () => {
+      setMarcados([]);
+      setPainel(false);
+      setEscolha("");
+      setNova("");
+      return queryClient.invalidateQueries({ queryKey: ["leads-lista"] });
+    },
+  });
 
   const query = useQuery({
     queryKey: ["leads-lista", busca, origem, tag, funil, pagina],
@@ -69,7 +93,13 @@ export function LeadsClient() {
   const mudar = (fn: () => void) => {
     fn();
     setPagina(1);
+    setMarcados([]);
   };
+  const idsDaPagina = (dados?.leads ?? []).map((l) => l.id);
+  const todosMarcados = idsDaPagina.length > 0 && idsDaPagina.every((id) => marcados.includes(id));
+  const alternar = (id: string) =>
+    setMarcados((atual) => (atual.includes(id) ? atual.filter((x) => x !== id) : [...atual, id]));
+  const origemFinal = escolha === NOVA_ORIGEM ? nova.trim() : escolha;
 
   return (
     <section aria-labelledby="leads-titulo" className="space-y-4">
@@ -149,10 +179,68 @@ export function LeadsClient() {
           <p className="text-sm text-text-muted">
             {dados.total} {t("Leads")}
           </p>
+          {marcados.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-elevated p-2 text-sm">
+              <span>
+                {marcados.length} {t("selecionado(s)")}
+              </span>
+              <Button size="sm" variant="secondary" onClick={() => setPainel((v) => !v)}>
+                {t("Alterar origem")}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setMarcados([])}>
+                {t("Limpar seleção")}
+              </Button>
+            </div>
+          ) : null}
+          {painel && marcados.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3 text-sm">
+              <select
+                className={SELECT_CLASSE}
+                value={escolha}
+                aria-label={t("Nova origem")}
+                onChange={(e) => setEscolha(e.target.value)}
+              >
+                <option value="">{t("Escolha a nova origem")}</option>
+                {(dados?.origens ?? []).map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+                <option value={NOVA_ORIGEM}>{t("Outra origem…")}</option>
+              </select>
+              {escolha === NOVA_ORIGEM ? (
+                <input
+                  value={nova}
+                  onChange={(e) => setNova(e.target.value)}
+                  placeholder={t("Nome da origem")}
+                  aria-label={t("Nome da origem")}
+                  className="h-9 w-56 rounded-md border border-border bg-surface-elevated px-3 text-sm text-text"
+                />
+              ) : null}
+              <Button
+                size="sm"
+                disabled={!origemFinal || alterar.isPending}
+                onClick={() => alterar.mutate({ ids: marcados, origem: origemFinal })}
+              >
+                {alterar.isPending ? t("Alterando…") : t("Aplicar")}
+              </Button>
+              {alterar.isError ? (
+                <span className="text-error">{t("Não consegui alterar a origem.")}</span>
+              ) : null}
+            </div>
+          ) : null}
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full text-left text-sm">
               <thead className="bg-surface-elevated text-xs uppercase text-text-muted">
                 <tr>
+                  <th className="w-8 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label={t("Selecionar todos desta página")}
+                      checked={todosMarcados}
+                      onChange={() => setMarcados(todosMarcados ? [] : idsDaPagina)}
+                    />
+                  </th>
                   <th className="px-3 py-2">{t("Lead")}</th>
                   <th className="px-3 py-2">{t("Telefone")}</th>
                   <th className="px-3 py-2">{t("Funil")}</th>
@@ -160,19 +248,27 @@ export function LeadsClient() {
                   <th className="px-3 py-2">{t("Origem")}</th>
                   <th className="px-3 py-2">{t("Etiquetas")}</th>
                   <th className="px-3 py-2">{t("Criado em")}</th>
+                  <th className="px-3 py-2">{t("Ações")}</th>
                 </tr>
               </thead>
               <tbody>
                 {dados.leads.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-text-muted">
+                    <td colSpan={9} className="px-3 py-6 text-center text-text-muted">
                       {t("Nenhum lead encontrado.")}
                     </td>
                   </tr>
                 ) : (
                   dados.leads.map((l) => (
                     <tr key={l.id} className="border-t border-border">
-                      <td className="px-3 py-2 font-medium">
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          aria-label={t("Selecionar lead")}
+                          checked={marcados.includes(l.id)}
+                          onChange={() => alternar(l.id)}
+                        />
+                      </td>                      <td className="px-3 py-2 font-medium">
                         {l.contact_id ? (
                           <Link href={`/app/contacts/${l.contact_id}`} className="hover:underline">
                             {l.title}
@@ -199,7 +295,30 @@ export function LeadsClient() {
                         </span>
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">{quando(l.created_at)}</td>
-                    </tr>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className="flex gap-1">
+                          {linkDoWhatsapp(l.contact?.phone_number) ? (
+                            <a
+                              href={linkDoWhatsapp(l.contact?.phone_number) ?? "#"}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-elevated"
+                            >
+                              {t("WhatsApp")}
+                            </a>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setMarcados([l.id]);
+                              setPainel(true);
+                            }}
+                          >
+                            {t("Origem")}
+                          </Button>
+                        </span>
+                      </td>                    </tr>
                   ))
                 )}
               </tbody>

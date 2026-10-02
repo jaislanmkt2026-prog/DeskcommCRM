@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 
+import { z } from "zod";
+
 import { ok, fail } from "@/lib/api/wrappers";
+import { audit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth/require-role";
+import { requireSupportWrite } from "@/lib/impersonate/support";
 import { traduzir } from "@/lib/i18n/dicionario";
 import { createClient } from "@/lib/supabase/server";
 
@@ -73,4 +77,59 @@ export async function GET(req: NextRequest): Promise<Response> {
     },
     { requestId },
   );
+}
+
+const corpoOrigem = z
+  .object({
+    ids: z.array(z.string().uuid()).min(1).max(200),
+    origem: z.string().trim().min(1).max(80),
+  })
+  .strict();
+
+export async function PATCH(req: NextRequest): Promise<Response> {
+  const supportDenied = await requireSupportWrite();
+  if (supportDenied) return supportDenied;
+
+  const requestId = randomUUID();
+  const authz = await requireRole("agent", { requestId, resource: "crm_leads" });
+  if (!authz.ok) return authz.response;
+  const t = (texto: string) => traduzir(texto, authz.user.idioma);
+
+  let corpo: unknown;
+  try {
+    corpo = await req.json();
+  } catch {
+    return fail("validation_failed", t("JSON inválido."), 400, { requestId });
+  }
+  const parsed = corpoOrigem.safeParse(corpo);
+  if (!parsed.success) {
+    return fail("validation_failed", t("Escolha os leads e a nova origem."), 400, { requestId });
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("crm_leads")
+    .update({ source: parsed.data.origem, updated_at: new Date().toISOString() })
+    .eq("organization_id", authz.org.orgId)
+    .in("id", parsed.data.ids)
+    .select("id");
+  if (error) {
+    return fail("internal_error", t("Não consegui alterar a origem."), 500, { requestId });
+  }
+
+  const alterados = (data ?? []) as Array<{ id: string }>;
+  await Promise.all(
+    alterados.map((l) =>
+      audit({
+        action: "lead.updated",
+        actorUserId: authz.user.id,
+        organizationId: authz.org.orgId,
+        resourceType: "crm_lead",
+        resourceId: l.id,
+        requestId,
+        metadata: { fields: ["source"], origem: parsed.data.origem },
+      }),
+    ),
+  );
+  return ok({ alterados: alterados.length }, { requestId });
 }
