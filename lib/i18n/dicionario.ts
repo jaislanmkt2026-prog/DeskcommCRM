@@ -16217,6 +16217,7 @@ export const DICIONARIO: Traducoes = {
   "Corrigido": { es: "Corregido" },
   "Onde fica": { es: "Dónde está" },
   "Central de Atualizações": { es: "Centro de Actualizaciones" },
+  "Atualizações": { es: "Actualizaciones" },
   "O Crivo interno monitora e analisa o upstream. Esta área não aplica atualização, migration, merge ou rebase.":
     {
       es: "El Crivo interno monitorea y analiza el upstream. Esta área no aplica actualización, migración, merge ni rebase.",
