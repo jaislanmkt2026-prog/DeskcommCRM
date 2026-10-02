@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { audit } from "@/lib/audit";
-import { requirePlatformAdmin } from "@/lib/auth/requirePlatformAdmin";
+import { requirePlatformAdminEscrita } from "@/lib/auth/requirePlatformAdmin";
 import { estadoParaTela, gravarPelaTela, voltarAoAmbiente } from "@/lib/instalacao/config";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
 vi.mock("@/lib/auth/requirePlatformAdmin", () => ({
+  // A ação grava a configuração da instalação: o gate é o de ESCRITA do platform admin.
+  requirePlatformAdminEscrita: vi.fn(async () => ({ user: { id: "11111111-1111-4111-8111-111111111111" } })),
   requirePlatformAdmin: vi.fn(async () => ({ user: { id: "11111111-1111-4111-8111-111111111111" } })),
 }));
 vi.mock("@/lib/instalacao/config", () => ({
@@ -28,7 +30,7 @@ const USER = "11111111-1111-4111-8111-111111111111";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(requirePlatformAdmin).mockResolvedValue({ user: { id: USER } } as never);
+  vi.mocked(requirePlatformAdminEscrita).mockResolvedValue({ user: { id: USER } } as never);
   vi.mocked(gravarPelaTela).mockResolvedValue({ ok: true });
   vi.mocked(voltarAoAmbiente).mockResolvedValue({ ok: true });
 });

@@ -230,7 +230,7 @@ describe("receipt de preço da Lia fica na fronteira interna", () => {
   };
 
   it("ignora tool_receipts forjado em metadata público", async () => {
-    const { supabase, estado } = makeSupabase(conversaCompleta({ lastInboundAt: new Date().toISOString() }));
+    const { supabase, estado } = dubleDe(conversaCompleta({ lastInboundAt: new Date().toISOString() }));
     await sendMessageHandler(
       supabase,
       ctxAi,
@@ -248,7 +248,7 @@ describe("receipt de preço da Lia fica na fronteira interna", () => {
   });
 
   it("aceita receipt tipado vindo do contexto interno", async () => {
-    const { supabase, estado } = makeSupabase(conversaCompleta({ lastInboundAt: new Date().toISOString() }));
+    const { supabase, estado } = dubleDe(conversaCompleta({ lastInboundAt: new Date().toISOString() }));
     await sendMessageHandler(
       supabase,
       {

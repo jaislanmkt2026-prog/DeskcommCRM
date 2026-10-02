@@ -98,6 +98,10 @@ export interface OrderRow {
   ordered_at: string | null;
 }
 
+/** Módulo imobiliário (0429/0433/0434): o que se apaga a pedido do titular se entrega a pedido dele (Art. 18 II). */
+export interface ImobChecklistRow { id: string; checklist_key: string; status: string; recebido_em: string | null; recusado_motivo: string | null; created_at: string }
+export interface ImobNegociacaoRow { id: string; unidade_id: string | null; imovel_terceiros_id: string | null; estagio: string; valor_cents: number | null; created_at: string }
+export interface ImobPropostaRow { id: string; unit_id: string | null; price_list_id: string | null; payment_composition: unknown; status: string; created_at: string }
 export interface ActivityRow {
   id: string;
   lead_id: string | null;
@@ -563,6 +567,9 @@ export interface ExportPayload {
   orders: OrderRow[];
   activities: ActivityRow[];
   checkpoints: CheckpointRow[];
+  imob_checklist: ImobChecklistRow[];
+  imob_negociacoes: ImobNegociacaoRow[];
+  imob_propostas: ImobPropostaRow[];
   appointments: AppointmentRow[];
   sales: SaleRow[];
   proposals: ProposalRow[];
@@ -1212,6 +1219,41 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     }
   }
 
+  // Módulo imobiliário — checklist documental, negociações e propostas do titular.
+  let imob_checklist: ImobChecklistRow[] = [];
+  let imob_negociacoes: ImobNegociacaoRow[] = [];
+  let imob_propostas: ImobPropostaRow[] = [];
+  if (contactId) {
+    const [chk, neg, prop] = await Promise.all([
+      admin
+        .from("document_checklist_items")
+        .select("id, checklist_key, status, recebido_em, recusado_motivo, created_at")
+        .eq("organization_id", organizationId)
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      admin
+        .from("negotiations")
+        .select("id, unidade_id, imovel_terceiros_id, estagio, valor_cents, created_at")
+        .eq("organization_id", organizationId)
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      admin
+        .from("property_proposals")
+        .select("id, unit_id, price_list_id, payment_composition, status, created_at")
+        .eq("organization_id", organizationId)
+        .eq("client_id", contactId)
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ]);
+    if (chk.error) logger.warn("[lgpd-export-worker] imob checklist load failed", { request_id: requestId, error: chk.error.message });
+    else if (chk.data) imob_checklist = chk.data as ImobChecklistRow[];
+    if (neg.error) logger.warn("[lgpd-export-worker] imob negotiations load failed", { request_id: requestId, error: neg.error.message });
+    else if (neg.data) imob_negociacoes = neg.data as ImobNegociacaoRow[];
+    if (prop.error) logger.warn("[lgpd-export-worker] imob proposals load failed", { request_id: requestId, error: prop.error.message });
+    else if (prop.data) imob_propostas = prop.data as ImobPropostaRow[];
+  }
   // Resumos do agente — contact_id direto em lead_checkpoints.
   let checkpoints: CheckpointRow[] = [];
   if (contactId) {
@@ -2034,6 +2076,9 @@ export async function collectExportData(args: CollectArgs): Promise<ExportPayloa
     orders,
     activities,
     checkpoints,
+    imob_checklist,
+    imob_negociacoes,
+    imob_propostas,
     appointments,
     sales,
     proposals,
@@ -2091,6 +2136,9 @@ function emptyPayload(
     orders: [],
     activities: [],
     checkpoints: [],
+    imob_checklist: [],
+    imob_negociacoes: [],
+    imob_propostas: [],
     appointments: [],
     sales: [],
     proposals: [],

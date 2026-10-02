@@ -8,6 +8,10 @@ import { executarCrivoUpstream } from "@/lib/system/upstream-monitor";
 vi.mock("@/lib/auth/server", () => ({ loadAuthUser: vi.fn() }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: vi.fn() }));
 vi.mock("@/lib/impersonate/support", () => ({ requireSupportWrite: vi.fn(async () => null) }));
+vi.mock("@/lib/auth/requirePlatformAdmin", () => ({
+  requirePlatformAdminEscrita: vi.fn(async () => ({ user: { id: "owner" } })),
+  falhaDaEscritaDePlatformAdmin: vi.fn(),
+}));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
 vi.mock("@/lib/system/upstream-monitor", () => ({ executarCrivoUpstream: vi.fn() }));
 

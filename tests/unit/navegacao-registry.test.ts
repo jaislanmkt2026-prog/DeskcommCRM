@@ -151,7 +151,7 @@ describe("sidebarGroups", () => {
     expect(ids).toContain("atendimento");
   });
 
-  it("a ordem dentro do grupo de IA é a do uso real: agentes, follow-ups, casos", () => {
+  it("o grupo de IA mantém no sidebar agentes e casos (Roteadores e Follow-ups saem para dar lugar ao grupo imobiliário)", () => {
     // Provedores e Execuções NÃO entram aqui, e a razão é medida: pô-las na
     // sidebar estourou a dobra em 900px (e2e `navegacao.spec.ts`). Elas seguem
     // o padrão das outras nove telas do grupo — alcançáveis pelo hub "Ver tudo
@@ -161,7 +161,6 @@ describe("sidebarGroups", () => {
     // poucas vezes; caso pede resposta no mesmo dia.
     expect(ia?.items.map((i) => i.href)).toEqual([
       "/app/ai/agents",
-      "/app/ai/followups",
       "/app/ai/cases",
     ]);
   });

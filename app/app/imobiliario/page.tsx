@@ -207,15 +207,15 @@ export default async function ImobiliarioPage() {
 
       <nav aria-label={t("Atalhos operacionais")} className="flex flex-wrap gap-2">
         {[
-          { href: "/app/inbox", label: "Inbox", icon: Inbox },
-          { href: "/app/kanban", label: "Funis", icon: Kanban },
-          { href: "/app/contacts", label: "Contatos", icon: UsersThree },
-          { href: "/app/radar", label: "Radar", icon: Warning },
+          { href: "/app/inbox", label: t("Inbox"), icon: Inbox },
+          { href: "/app/kanban", label: t("Funis"), icon: Kanban },
+          { href: "/app/contacts", label: t("Contatos"), icon: UsersThree },
+          { href: "/app/radar", label: t("Radar"), icon: Warning },
         ].map(({ href, label, icon: Icon }) => (
           <Button key={href} asChild variant="outline" size="sm">
             <Link href={href}>
               <Icon aria-hidden />
-              {t(label)}
+              {label}
             </Link>
           </Button>
         ))}

@@ -181,13 +181,13 @@ describe("a organização não consegue se trancar do lado de fora", () => {
 describe("medição da folga (pergunta de aceite da issue #1341)", () => {
   /**
    * Baseline: a configuração de HOJE — nenhuma escolha, nem da empresa nem do
-   * vínculo. São 14 itens: atendimento 4, CRM 3, imobiliário 1, IA 1, canais 2,
-   * análise 3. O teto medido continua 15, então sobra uma linha de folga.
+   * vínculo. São 15 itens: atendimento 4, CRM 3, imobiliário 1, IA 2, canais 2,
+   * análise 3. O teto medido continua 15, então não sobra folga.
    */
-  it("hoje: 14 itens no menu lateral, folga 1 até o teto da dobra a 1280x900", () => {
-    expect(itensNoMenuLateral(INTERFACE_COMPLETA)).toBe(14);
+  it("hoje: 15 itens no menu lateral, folga 0 até o teto da dobra a 1280x900", () => {
+    expect(itensNoMenuLateral(INTERFACE_COMPLETA)).toBe(15);
     // `undefined` é o caminho de quem não tem escolha nenhuma gravada
-    expect(itensNoMenuLateral(undefined)).toBe(14);
+    expect(itensNoMenuLateral(undefined)).toBe(15);
   });
 
   /**
@@ -195,8 +195,8 @@ describe("medição da folga (pergunta de aceite da issue #1341)", () => {
    * A escolha da empresa é interseção, então o menu só ENCOLHE — a mudança não
    * tem como empurrar o instrumento de tela para o vermelho.
    */
-  it("configuração COMPLETA (ninguém escolheu): 14 itens, folga 1 — igual a hoje", () => {
-    expect(itensNoMenuLateral(combinarInterfaces(completa, completa))).toBe(14);
+  it("configuração COMPLETA (ninguém escolheu): 15 itens, folga 0 — igual a hoje", () => {
+    expect(itensNoMenuLateral(combinarInterfaces(completa, completa))).toBe(15);
   });
 
   it("configuração SIMPLIFICADA (empresa escolhe o preset): 6 itens, folga 9", () => {
