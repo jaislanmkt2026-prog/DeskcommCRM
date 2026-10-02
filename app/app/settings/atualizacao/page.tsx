@@ -1,9 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { loadAuthUser } from "@/lib/auth/server";
-import { UpdatePanel } from "./_components/UpdatePanel";
-import { NovidadesPanel } from "./_components/NovidadesPanel";
-import { UpdateCenterPanel } from "./_components/UpdateCenterPanel";
+import { AtualizacoesAbas } from "./_components/AtualizacoesAbas";
 
 export const metadata = { title: "Atualização do sistema" };
 export const dynamic = "force-dynamic";
@@ -16,11 +14,5 @@ export const dynamic = "force-dynamic";
 export default async function Page() {
   const user = await loadAuthUser();
   if (!user?.is_platform_admin) notFound();
-  return (
-    <>
-      <NovidadesPanel />
-      <UpdateCenterPanel />
-      <UpdatePanel />
-    </>
-  );
+  return <AtualizacoesAbas />;
 }

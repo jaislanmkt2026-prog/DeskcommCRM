@@ -85,11 +85,11 @@ export function NovidadesPanel() {
                     const itens = (n.itens ?? []).filter((i) => i.tipo === tipo);
                     if (!itens.length) return null;
                     return (
-                      <div key={tipo} className="mt-3">
-                        <p className="text-xs font-semibold tracking-wide text-text-muted uppercase">
+                      <details key={tipo} open={tipo !== "corrigido"} className="mt-3">
+                        <summary className="cursor-pointer text-sm font-semibold">
                           {rotulo} ({itens.length})
-                        </p>
-                        <ul className="mt-1 space-y-1.5">
+                        </summary>
+                        <ul className="mt-2 space-y-1.5">
                           {itens.map((i, idx) => (
                             <li key={`${tipo}-${idx}`} className="text-sm">
                               <span>{i.titulo}</span>
@@ -104,7 +104,7 @@ export function NovidadesPanel() {
                             </li>
                           ))}
                         </ul>
-                      </div>
+                      </details>
                     );
                   })}
                 </article>
