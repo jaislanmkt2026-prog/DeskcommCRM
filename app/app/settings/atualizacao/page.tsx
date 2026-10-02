@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { loadAuthUser } from "@/lib/auth/server";
 import { UpdatePanel } from "./_components/UpdatePanel";
+import { NovidadesPanel } from "./_components/NovidadesPanel";
 import { UpdateCenterPanel } from "./_components/UpdateCenterPanel";
 
 export const metadata = { title: "Atualização do sistema" };
@@ -17,6 +18,7 @@ export default async function Page() {
   if (!user?.is_platform_admin) notFound();
   return (
     <>
+      <NovidadesPanel />
       <UpdateCenterPanel />
       <UpdatePanel />
     </>

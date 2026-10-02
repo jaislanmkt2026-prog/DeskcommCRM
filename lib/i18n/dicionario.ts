@@ -16186,6 +16186,14 @@ export const DICIONARIO: Traducoes = {
   "Ajustar": { es: "Ajustar" },
   "Tudo o que se liga e desliga, se está ligado e onde se ajusta.": { es: "Todo lo que se activa y desactiva, si está activado y dónde se ajusta." },
   // --- Textos do dono (Crivo e telas locais) preservados na integração com o upstream ---
+  "O que chegou nas atualizações": { es: "Lo que llegó en las actualizaciones" },
+  "Cada atualização aplicada pelo Crivo, com o lugar do CRM onde fica cada novidade.": { es: "Cada actualización aplicada por Crivo, con el lugar del CRM donde está cada novedad." },
+  "Carregando novidades…": { es: "Cargando novedades…" },
+  "Não foi possível carregar as novidades.": { es: "No fue posible cargar las novedades." },
+  "Nenhuma atualização registrada ainda. Quando o Crivo aplicar a próxima, ela aparece aqui.": { es: "Aún no hay actualizaciones registradas. Cuando Crivo aplique la próxima, aparecerá aquí." },
+  "Melhorado": { es: "Mejorado" },
+  "Corrigido": { es: "Corregido" },
+  "Onde fica": { es: "Dónde está" },
   "Central de Atualizações": { es: "Centro de Actualizaciones" },
   "O Crivo interno monitora e analisa o upstream. Esta área não aplica atualização, migration, merge ou rebase.":
     {
