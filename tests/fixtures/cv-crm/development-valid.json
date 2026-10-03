@@ -1,0 +1,11 @@
+{
+  "entity_type": "development",
+  "external_id": "CV-DEV-001",
+  "payload": {
+    "nome": "Residencial Alpha",
+    "endereco": "Rua das Flores, 123",
+    "cidade": "São Paulo",
+    "estado": "SP",
+    "status": "ativo"
+  }
+}

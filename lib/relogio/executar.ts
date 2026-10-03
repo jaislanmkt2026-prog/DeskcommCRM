@@ -1,4 +1,5 @@
 import { recoverStuckMessages } from "@/app/api/v1/cron/recover-stuck-messages/route";
+import { runCvCrmIngest } from "@/lib/cv-crm/ingest";
 import { idsDoContatoEGemeos } from "@/lib/channels/contato-por-telefone";
 import { drainEventLog } from "@/lib/event-log/drain";
 import { ensureHandlersRegistered } from "@/lib/event-log/register-handlers";
@@ -48,11 +49,15 @@ async function enfileirarFollowup(job: FollowupJobRequest): Promise<void> {
  * batido. Aqui lemos a última inbound (gêmeos de telefone inclusive) e
  * avançamos quem já respondeu.
  */
-export async function aplicarRespostasQueChegaram(admin: SupabaseClient, deps: TickDeps): Promise<number> {
+export async function aplicarRespostasQueChegaram(
+  admin: SupabaseClient,
+  deps: TickDeps,
+): Promise<number> {
   // Org parada não avança fluxo (migration 0501 — o claim do motor também a pula).
   const paradas = await idsDeOrgsParadas(admin);
   let consulta = admin.from("followup_enrollments").select("*").in("status", ["waiting_reply"]);
-  if (paradas.length > 0) consulta = consulta.not("organization_id", "in", `(${paradas.join(",")})`);
+  if (paradas.length > 0)
+    consulta = consulta.not("organization_id", "in", `(${paradas.join(",")})`);
   const { data, error } = await consulta.limit(40);
   if (error) throw new Error(error.message);
   let n = 0;
@@ -216,6 +221,11 @@ export async function executarTickDoRelogio(): Promise<{
     const alerta = await alertarExcecaoCrivo(admin, cicloResultado, rollbacksResultados);
     if (alerta.alerted) mexeu = true;
     return alerta;
+  });
+
+  await uma("cv-crm-ingest", async () => {
+    const summary = await runCvCrmIngest();
+    return summary;
   });
 
   return { tarefas, mexeu };

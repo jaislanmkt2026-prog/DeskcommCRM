@@ -28,9 +28,7 @@ const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
  * pra permitir setup parcial (ex: dev sem WAHA quando trabalhando só na UI).
  */
 const required = (name: string) =>
-  isProd
-    ? z.string().min(1, `${name} é obrigatória em produção`)
-    : z.string().default("");
+  isProd ? z.string().min(1, `${name} é obrigatória em produção`) : z.string().default("");
 
 const requiredAlways = (name: string) => z.string().min(1, `${name} é obrigatória`);
 
@@ -490,14 +488,8 @@ const schema = z.object({
     .transform((v) => v === "true"),
 
   // App URLs
-  NEXT_PUBLIC_APP_URL: z
-    .string()
-    .url()
-    .default("http://localhost:3000"),
-  NEXT_PUBLIC_ADMIN_URL: z
-    .string()
-    .url()
-    .default("http://localhost:3000"),
+  NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
+  NEXT_PUBLIC_ADMIN_URL: z.string().url().default("http://localhost:3000"),
   /**
    * URL pública opcional para os webhooks da Meta (WhatsApp Cloud API / canais oficiais).
    * Quando definida, é usada no lugar de NEXT_PUBLIC_APP_URL para compor a URL de callback
@@ -565,6 +557,10 @@ const schema = z.object({
    */
   VAPID_PUBLIC_KEY: z.string().optional().default(""),
   VAPID_PRIVATE_KEY: z.string().optional().default(""),
+  // CV CRM integration
+  CV_CRM_API_URL: z.string().optional().default(""),
+  CV_CRM_MOCK: z.string().optional().default(""),
+  CV_CRM_ORG_ID: z.string().optional().default(""),
 });
 
 let parsed = schema.safeParse(process.env);
