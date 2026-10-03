@@ -1,12 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import {
-  GOV_ORG,
-  columnExists,
-  indexExists,
-  seedGov,
-  sql,
-} from "./gov-helpers";
+import { GOV_ORG, columnExists, indexExists, seedGov, sql } from "./gov-helpers";
 
 const ORG_B = "dddddddd-0000-4000-8000-000000000081";
 const CONSTRUCTOR_A = "dddddddd-1000-4000-8000-000000000081";
@@ -55,7 +49,9 @@ describe("0527 — identidade CV CRM nas entidades imobiliarias", () => {
   it("a mesma identidade externa nao duplica dentro do mesmo tenant", () => {
     sql(`update public.real_estate_developments set external_id = 'CV-DUP' where id = '${DEV_A}';`);
     expect(() =>
-      sql(`update public.real_estate_developments set external_id = 'CV-DUP' where id = '${DEV_A_2}';`),
+      sql(
+        `update public.real_estate_developments set external_id = 'CV-DUP' where id = '${DEV_A_2}';`,
+      ),
     ).toThrow(/duplicate key|uq_developments_org_external_id/i);
   });
 

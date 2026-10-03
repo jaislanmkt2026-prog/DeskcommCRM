@@ -11,6 +11,10 @@ export async function GET(req: NextRequest) {
   try {
     const result = await runCvCrmIngest({ orgId: undefined, batchSize: 1000 });
     console.info(`${LOG_PREFIX} completed`, result);
+    // Retorna HTTP 500 se a ingestão falhou internamente
+    if (result.status === "error") {
+      return NextResponse.json(result, { status: 500 });
+    }
     return NextResponse.json(result);
   } catch (err) {
     console.error(`${LOG_PREFIX} failed`, { requestId, err });

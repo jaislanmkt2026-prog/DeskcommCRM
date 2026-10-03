@@ -18,10 +18,11 @@ export async function runCvCrmIngest(opts?: {
   orgId?: string;
   batchSize?: number;
 }): Promise<IngestSummary> {
+  const batchId = crypto.randomUUID();
   const orgId = opts?.orgId ?? env.CV_CRM_ORG_ID;
   if (!orgId) {
     return {
-      batch_id: crypto.randomUUID(),
+      batch_id: batchId,
       total_records: 0,
       valid: 0,
       invalid: 0,
@@ -32,13 +33,45 @@ export async function runCvCrmIngest(opts?: {
     };
   }
 
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // Validação de tenant via RPC fn_user_org_ids()
+  const supabaseForValidation = createAdminClient();
+  const { data: allowedOrgIds, error: rpcError } =
+    await supabaseForValidation.rpc("fn_user_org_ids");
+
+  if (rpcError) {
+    return {
+      batch_id: batchId,
+      total_records: 0,
+      valid: 0,
+      invalid: 0,
+      processed: 0,
+      stale_count: 0,
+      status: "error",
+      errors: [`Falha ao obter tenants autorizados: ${rpcError.message}`],
+    };
+  }
+
+  const orgList = Array.isArray(allowedOrgIds) ? allowedOrgIds : [];
+  if (!orgList.includes(orgId)) {
+    return {
+      batch_id: batchId,
+      total_records: 0,
+      valid: 0,
+      invalid: 0,
+      processed: 0,
+      stale_count: 0,
+      status: "error",
+      errors: [`Tenant ${orgId} não está na whitelist de tenants autorizados`],
+    };
+  }
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   let records: Awaited<ReturnType<typeof fetchBatch>>;
   try {
     records = await fetchBatch(orgId, since);
   } catch (err) {
     return {
-      batch_id: crypto.randomUUID(),
+      batch_id: batchId,
       total_records: 0,
       valid: 0,
       invalid: 0,
@@ -66,17 +99,16 @@ export async function runCvCrmIngest(opts?: {
             : rec.entity_type === "price_list"
               ? "real_estate_price_lists"
               : "real_estate_price_list_items";
-      const { error } = await supabase
-        .from(table)
-        .upsert(
-          {
-            organization_id: orgId,
-            external_id: rec.external_id,
-            ...rec.payload,
-            cv_crm_last_seen_at: batchStartedAt.toISOString(),
-          },
-          { onConflict: "organization_id,external_id" },
-        );
+      const { error } = await supabase.from(table).upsert(
+        {
+          organization_id: orgId,
+          external_id: rec.external_id,
+          ...rec.payload,
+          cv_crm_batch_id: batchId,
+          cv_crm_last_seen_at: batchStartedAt.toISOString(),
+        },
+        { onConflict: "organization_id,external_id" },
+      );
       if (error) {
         invalid++;
         errors.push(`${rec.external_id}: ${error.message}`);
@@ -100,7 +132,7 @@ export async function runCvCrmIngest(opts?: {
   }
 
   return {
-    batch_id: crypto.randomUUID(),
+    batch_id: batchId,
     total_records: records.length,
     valid: records.length - invalid,
     invalid,
