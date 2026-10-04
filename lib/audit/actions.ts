@@ -1002,6 +1002,17 @@ export const AUDIT_ACTIONS = [
   "company_people.updated",
   "contacts.person_linked",
   "imports.companies_people",
+
+  // ── CV CRM — ingestão oficial (cron) ──────────────────────────────────────
+  // Rodada do cron que ingeriu registros do CV CRM: sucesso, falha ou parcial.
+  // Metadata leva batch_id, organization_id, total/valid/invalid/processed/stale_count.
+  "cv_crm.ingestion_completed",
+  "cv_crm.ingestion_failed",
+  "cv_crm.ingestion_partial",
+  // Leitura operacional dos logs de ingestão (diagnóstico/admin)
+  "cv_crm.logs_listed",
+  // Visualização de métricas agregadas CV CRM
+  "cv_crm.metrics_viewed",
 ] as const;
 
 /** Um código de auditoria. Derivado de `AUDIT_ACTIONS` — não redigite a lista. */

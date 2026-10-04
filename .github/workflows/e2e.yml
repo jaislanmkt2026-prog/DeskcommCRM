@@ -1201,6 +1201,7 @@ jobs:
         redes-sociais-volta-nao-desloga.spec.ts
         sons-dos-avisos.spec.ts
         suspensao-administrativa.spec.ts
+        cv-crm-ingestion-journey.spec.ts
 
       # ─── FORA_DO_CI — as que ficaram fora, e o motivo de cada uma ───
       #
@@ -1925,6 +1926,22 @@ jobs:
         run: |
           cp .env.e2e .env.local
           pnpm exec tsx scripts/seed-e2e-credentials.ts
+      # A jornada CV CRM roda só na parte 6. O tenant vem do seed real da suíte,
+      # e a fonte é um dublê loopback iniciado pela própria spec. As duas vars
+      # entram no arquivo que o playwright.config injeta no next start e também
+      # no ambiente do runner, preservando uma única configuração observável.
+      - if: matrix.parte == 6
+        name: Configurar fonte sintética CV CRM da parte 6
+        run: |
+          set -euo pipefail
+          ORG_ID=$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync(".e2e-creds.json","utf8")); if(!c.org_id) process.exit(2); process.stdout.write(c.org_id)')
+          {
+            echo "CV_CRM_API_URL=http://127.0.0.1:3995"
+            echo "CV_CRM_ORG_ID=$ORG_ID"
+          } >> .env.e2e
+          cp .env.e2e .env.local
+          echo "CV_CRM_API_URL=http://127.0.0.1:3995" >> "$GITHUB_ENV"
+          echo "CV_CRM_ORG_ID=$ORG_ID" >> "$GITHUB_ENV"
 
       # `SUPABASE_DB_URL` no `.env.local` (e não só no `env:` do passo de teste):
       # `seed-e2e-escalacao.ts` abre um `pg.Pool` direto, e o `.env.local` é a
