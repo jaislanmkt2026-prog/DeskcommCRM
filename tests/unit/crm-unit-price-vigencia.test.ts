@@ -10,6 +10,7 @@ describe("crm_get_unit_price — Validação de Vigência e Status (Missão 5D)"
   function criarMockSupabase(opcoes: {
     tableExists: boolean;
     unitStatus?: string;
+    unitStaleSince?: string | null;
     priceLists?: Array<Record<string, unknown>>;
     items?: Array<Record<string, unknown>>;
   }) {
@@ -32,7 +33,12 @@ describe("crm_get_unit_price — Validação de Vigência e Status (Missão 5D)"
             eq: vi.fn().mockReturnThis(),
             maybeSingle: vi.fn().mockResolvedValue({
               data: opcoes.unitStatus
-                ? { id: unitId, status: opcoes.unitStatus, development_id: "dev-1" }
+                ? {
+                    id: unitId,
+                    status: opcoes.unitStatus,
+                    development_id: "dev-1",
+                    cv_crm_stale_since: opcoes.unitStaleSince ?? null,
+                  }
                 : null,
               error: null,
             }),
@@ -200,5 +206,19 @@ describe("crm_get_unit_price — Validação de Vigência e Status (Missão 5D)"
     expect(res.ok).toBe(false);
     expect(res.error).toBe("Unidade não está disponível para venda");
     expect(res.status).toBe("vendida");
+  });
+
+  test("I. Unidade stale no CV CRM -> fail-closed antes de consultar preço", async () => {
+    const staleSince = "2026-10-03T12:00:00.000Z";
+    const supabase = criarMockSupabase({
+      tableExists: true,
+      unitStatus: "disponivel",
+      unitStaleSince: staleSince,
+    });
+
+    const res = await consultarPrecoUnidadeVigente(supabase, orgId, unitId, dataHoje);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("cv_crm_unit_stale");
+    expect(res.stale_since).toBe(staleSince);
   });
 });

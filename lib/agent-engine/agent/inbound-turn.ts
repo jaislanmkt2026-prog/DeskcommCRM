@@ -71,6 +71,12 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { moverLeadParaEtapaDeHandoff } from '@/lib/leads/handoff-stage-move';
 import { detectUrgencySignal } from '../guardrails/sinal-de-urgencia';
 import type { ToolReceipt } from '../guardrails/lia-outbound-guard';
+import {
+  isPreAtendimentoImobiliario,
+  LIA_CONVERSATION_SYSTEM_BLOCK,
+  validarRepeticaoDoNomeDaLia,
+  validarUmaPerguntaPorMensagemDaLia,
+} from '../guardrails/lia-conversation-policy';
 import { buildNativeMediaParts } from './media-parts';
 import {
   copiarFotoNoStorage,
@@ -2226,6 +2232,9 @@ async function executarTurnoDoAgente(
   // tools publicadas — ver comentário de `agendaSystemBlock`. `TRANSPARENCIA_SYSTEM_BLOCK`
   // não depende de nenhuma feature — todo agente publicado o recebe.
   const blocosResidentes = [systemWithMemory, TRANSPARENCIA_SYSTEM_BLOCK];
+  if (agentConfig !== null && isPreAtendimentoImobiliario(agentConfig.toolIds)) {
+    blocosResidentes.push(LIA_CONVERSATION_SYSTEM_BLOCK);
+  }
   if (agentConfig !== null && agentConfig.casesEnabled) blocosResidentes.push(CASES_SYSTEM_BLOCK);
   // Spec 15 §5.2 / doutrina da Agenda: a régua é o que o agente TEM — ver
   // `blocosDeAgendaResidentes`, que decidiu isto num lugar só para poder ser
@@ -2988,6 +2997,39 @@ async function executarTurnoDoAgente(
               code: 'corpo_vazio',
               message:
                 'O texto da mensagem ficou vazio. Escreva a resposta de verdade e chame send_message de novo.',
+            },
+          };
+        }
+        const politicaDePerguntasDaLia = validarUmaPerguntaPorMensagemDaLia({
+          body,
+          toolIds: agentConfig?.toolIds ?? [],
+        });
+        if (!politicaDePerguntasDaLia.ok) {
+          return {
+            ok: false,
+            error: {
+              code: politicaDePerguntasDaLia.code,
+              message: politicaDePerguntasDaLia.message,
+            },
+          };
+        }
+        const politicaDeNomeDaLia = validarRepeticaoDoNomeDaLia({
+          body,
+          contactName: effectiveContext.contact.name,
+          historicoOutbound: [
+            ...effectiveContext.messages
+              .filter((message) => message.direction === 'outbound')
+              .map((message) => message.body),
+            ...corposEnviados,
+          ],
+          toolIds: agentConfig?.toolIds ?? [],
+        });
+        if (!politicaDeNomeDaLia.ok) {
+          return {
+            ok: false,
+            error: {
+              code: politicaDeNomeDaLia.code,
+              message: politicaDeNomeDaLia.message,
             },
           };
         }
@@ -3904,13 +3946,29 @@ async function executarTurnoDoAgente(
                     const payload = result as Record<string, unknown>;
                     const price = payload.price;
                     if (payload.ok === true && typeof price === 'object' && price !== null) {
-                      const valorCents = (price as Record<string, unknown>).valor_cents;
+                      const priceData = price as Record<string, unknown>;
+                      const valorCents = priceData.valor_cents;
                       if (typeof valorCents === 'number' && Number.isFinite(valorCents)) {
+                        const sinalCents =
+                          typeof priceData.sinal_cents === 'number' && Number.isFinite(priceData.sinal_cents)
+                            ? priceData.sinal_cents
+                            : null;
                         toolReceiptsThisTurn = [
                           {
                             toolName: 'crm_get_unit_price',
                             ok: true,
-                            data: { price: { valor_cents: valorCents } },
+                            data: {
+                              price: {
+                                valor_cents: valorCents,
+                                sinal_cents: sinalCents,
+                                parcelas: priceData.parcelas ?? null,
+                                financiamento: priceData.financiamento ?? null,
+                                condicoes_chaves:
+                                  typeof priceData.condicoes_chaves === 'string'
+                                    ? priceData.condicoes_chaves
+                                    : null,
+                              },
+                            },
                           },
                         ];
                       }

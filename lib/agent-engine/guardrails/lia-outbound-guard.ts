@@ -10,6 +10,10 @@ export interface ToolReceipt {
   data?: {
     price?: {
       valor_cents?: number | null;
+      sinal_cents?: number | null;
+      parcelas?: unknown;
+      financiamento?: unknown;
+      condicoes_chaves?: string | null;
     };
   };
 }
@@ -58,7 +62,213 @@ function removerValoresDoCliente(text: string): string {
     "[DADO_CLIENTE_ENTRADA]"
   );
 
+  // Financiamento informado como intencao/limite do cliente nao e condicao comercial oficial da unidade.
+  cleaned = cleaned.replace(
+    /(?:(?:voce\s+)?(?:pretende|quer|pode|planeja|vai)\s+financiar|(?:eu\s+)?(?:pretendo|quero|posso|planejo|vou)\s+financiar)\s*(?:ate\s+)?R?\$?\s*[\d\.,]+(?:\s*(?:mil(?:hoes)?|reais))?/gi,
+    "[DADO_CLIENTE_FINANCIAMENTO]"
+  );
+
   return cleaned;
+}
+
+type TipoValorComercial = "price" | "sinal" | "parcela" | "financiamento";
+
+interface ValorComercialDetectado {
+  tipo: TipoValorComercial;
+  cents: number;
+}
+
+function normalizarTextoComparavel(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function valorMonetarioParaCentavos(raw: string): number | null {
+  const lower = raw.toLowerCase().trim();
+  const emMil = /\bmil\b/.test(lower);
+  let numero = lower
+    .replace(/r\$/g, "")
+    .replace(/\bmil\b/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  if (!numero) return null;
+
+  let reais: number;
+  if (emMil) {
+    const decimal = numero.replace(/\./g, "").replace(",", ".");
+    reais = Number(decimal) * 1_000;
+  } else if (numero.includes(",")) {
+    reais = Number(numero.replace(/\./g, "").replace(",", "."));
+  } else if (/^\d{1,3}(?:\.\d{3})+$/.test(numero)) {
+    reais = Number(numero.replace(/\./g, ""));
+  } else {
+    reais = Number(numero);
+  }
+
+  if (!Number.isFinite(reais) || reais < 0) return null;
+  return Math.round(reais * 100);
+}
+
+const REGEX_VALOR_MONETARIO =
+  /R\$\s*\d+(?:\.\d{3})*(?:,\d{1,2})?|\b\d+(?:[.,]\d+)?\s*mil\b/gi;
+
+function extrairValoresComerciais(text: string): {
+  valores: ValorComercialDetectado[];
+  parcelasQuantidades: number[];
+  mencionaCondicoes: boolean;
+  mencionaFinanciamento: boolean;
+} {
+  const texto = removerValoresDoCliente(text);
+  const valores: ValorComercialDetectado[] = [];
+  const regex = new RegExp(REGEX_VALOR_MONETARIO.source, REGEX_VALOR_MONETARIO.flags);
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(texto)) !== null) {
+    const cents = valorMonetarioParaCentavos(match[0]);
+    if (cents === null) continue;
+
+    const contextoAntes = normalizarTextoComparavel(
+      texto.slice(Math.max(0, match.index - 48), match.index)
+    );
+
+    let tipo: TipoValorComercial = "price";
+    if (/\bfinanciamento\s*(?:de|no\s+valor\s+de)?\s*$/.test(contextoAntes)) {
+      tipo = "financiamento";
+    } else if (/\bsinal\s*(?:de)?\s*$/.test(contextoAntes)) {
+      tipo = "sinal";
+    } else if (
+      /\bparcelas?\s*(?:de)?\s*$/.test(contextoAntes) ||
+      /\b\d+\s*parcelas?\s*(?:de)?\s*$/.test(contextoAntes)
+    ) {
+      tipo = "parcela";
+    }
+
+    valores.push({ tipo, cents });
+  }
+
+  const parcelasQuantidades: number[] = [];
+  const regexParcelas = /\b(\d{1,3})\s*parcelas?\b/gi;
+  while ((match = regexParcelas.exec(texto)) !== null) {
+    const quantidade = Number(match[1]);
+    if (Number.isInteger(quantidade) && quantidade > 0) {
+      parcelasQuantidades.push(quantidade);
+    }
+  }
+
+  const textoNormalizado = normalizarTextoComparavel(texto);
+  return {
+    valores,
+    parcelasQuantidades: Array.from(new Set(parcelasQuantidades)),
+    mencionaCondicoes: /\bcondic(?:ao|oes)\b/.test(textoNormalizado),
+    mencionaFinanciamento: /\bfinanciament(?:o|os)\b/.test(textoNormalizado),
+  };
+}
+
+function estruturaContemNumero(
+  value: unknown,
+  esperado: number,
+  modo: "count" | "cents"
+): boolean {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return modo === "count"
+      ? value === esperado
+      : Math.round(value) === esperado || Math.round(value * 100) === esperado;
+  }
+
+  if (typeof value === "string") {
+    if (modo === "count") {
+      return new RegExp(`\\b${esperado}\\b`).test(value);
+    }
+
+    const regex = new RegExp(REGEX_VALOR_MONETARIO.source, REGEX_VALOR_MONETARIO.flags);
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(value)) !== null) {
+      if (valorMonetarioParaCentavos(match[0]) === esperado) return true;
+    }
+
+    const numeroDireto = Number(value.replace(",", "."));
+    return (
+      Number.isFinite(numeroDireto) &&
+      (Math.round(numeroDireto) === esperado || Math.round(numeroDireto * 100) === esperado)
+    );
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => estruturaContemNumero(item, esperado, modo));
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value).some((item) => estruturaContemNumero(item, esperado, modo));
+  }
+
+  return false;
+}
+
+function receiptComprovaAfirmacoesComerciais(
+  text: string,
+  price: NonNullable<NonNullable<ToolReceipt["data"]>["price"]>
+): boolean {
+  const valorOficial = price.valor_cents;
+  if (typeof valorOficial !== "number" || !Number.isFinite(valorOficial)) {
+    return false;
+  }
+
+  const claims = extrairValoresComerciais(text);
+
+  for (const claim of claims.valores) {
+    if (claim.tipo === "price" && claim.cents !== valorOficial) {
+      return false;
+    }
+
+    if (claim.tipo === "sinal") {
+      if (
+        typeof price.sinal_cents !== "number" ||
+        !Number.isFinite(price.sinal_cents) ||
+        claim.cents !== price.sinal_cents
+      ) {
+        return false;
+      }
+    }
+
+    if (
+      claim.tipo === "parcela" &&
+      !estruturaContemNumero(price.parcelas, claim.cents, "cents")
+    ) {
+      return false;
+    }
+
+    if (
+      claim.tipo === "financiamento" &&
+      !estruturaContemNumero(price.financiamento, claim.cents, "cents")
+    ) {
+      return false;
+    }
+  }
+
+  for (const quantidade of claims.parcelasQuantidades) {
+    if (!estruturaContemNumero(price.parcelas, quantidade, "count")) {
+      return false;
+    }
+  }
+
+  if (
+    claims.mencionaCondicoes &&
+    (typeof price.condicoes_chaves !== "string" || price.condicoes_chaves.trim().length === 0)
+  ) {
+    return false;
+  }
+
+  if (
+    claims.mencionaFinanciamento &&
+    (typeof price.financiamento !== "string" || price.financiamento.trim().length === 0)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -84,6 +294,7 @@ export function detectarAfirmacaoPrecoImovel(text: string): {
   // 3. Condições de parcelas/sinal inventadas: "sinal de R$ 50.000 e 60 parcelas de R$ 1.500"
   const regexCondicoes =
     /(?:sinal\s*(?:de)?\s*R\$\s*[\d\.]+|\b\d+\s*parcelas?\s*de\s*R\$\s*[\d\.]+)/gi;
+  const regexFinanciamento = /\bfinanciament(?:o|os)\b/gi;
 
   // 4. Qualquer menção isolada a R$ XXX.XXX ou XXX mil que sobrou após remoção dos dados do cliente
   const regexValorResidual =
@@ -99,6 +310,9 @@ export function detectarAfirmacaoPrecoImovel(text: string): {
     trechos.push(match[0]);
   }
   while ((match = regexCondicoes.exec(textoParaAnalise)) !== null) {
+    trechos.push(match[0]);
+  }
+  while ((match = regexFinanciamento.exec(textoParaAnalise)) !== null) {
     trechos.push(match[0]);
   }
   while ((match = regexValorResidual.exec(textoParaAnalise)) !== null) {
@@ -172,8 +386,9 @@ export function aplicarGuardrailLiaOutbound(
     (r) => r.toolName === "crm_get_unit_price" && r.ok === true
   );
 
-  if (priceReceipt && priceReceipt.data?.price?.valor_cents) {
-    // Tem receipt oficial comprovado
+  const priceOficial = priceReceipt?.data?.price;
+  if (priceOficial && receiptComprovaAfirmacoesComerciais(bodyRedacted, priceOficial)) {
+    // Receipt oficial comprova os valores/condições afirmados na mensagem.
     return {
       body: bodyRedacted,
       sanitized: bodyRedacted !== body,
@@ -193,6 +408,7 @@ export function aplicarGuardrailLiaOutbound(
     (bodyRedacted.toLowerCase().includes("valor") ||
       bodyRedacted.toLowerCase().includes("preço") ||
       bodyRedacted.toLowerCase().includes("custa") ||
+      bodyRedacted.toLowerCase().includes("financi") ||
       bodyRedacted.toLowerCase().includes("r$"));
 
   if (pareceRespostaExclusivaDePreco) {

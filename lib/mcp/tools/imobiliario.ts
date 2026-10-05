@@ -196,6 +196,7 @@ export const crmListAvailableUnits: McpToolDefinition = {
       .eq("development_id", args.development_id)
       .eq("organization_id", orgId)
       .eq("status", "disponivel")
+      .is("cv_crm_stale_since", null)
       .order("bloco")
       .order("numero");
 
@@ -222,7 +223,7 @@ export const crmGetUnit: McpToolDefinition = {
     const { orgId, supabase } = getCtxResources(ctx);
     const { data, error } = await supabase
       .from("real_estate_units")
-      .select("id, development_id, bloco, numero, andar, metragem, quartos, suites, vagas, status, created_at")
+      .select("id, development_id, bloco, numero, andar, metragem, quartos, suites, vagas, status, cv_crm_stale_since, created_at")
       .eq("id", args.unit_id)
       .eq("organization_id", orgId)
       .maybeSingle();
@@ -232,6 +233,9 @@ export const crmGetUnit: McpToolDefinition = {
     }
     if (!data) {
       return { ok: false, error: "Unidade não encontrada" };
+    }
+    if (data.cv_crm_stale_since) {
+      return { ok: false, error: "cv_crm_unit_stale", stale_since: data.cv_crm_stale_since };
     }
     return { ok: true, unit: data };
   },
@@ -267,7 +271,7 @@ export async function consultarPrecoUnidadeVigente(
   // 2. Valida unidade e tenant
   const { data: unit, error: unitErr } = await client
     .from("real_estate_units")
-    .select("id, status, development_id")
+    .select("id, status, development_id, cv_crm_stale_since")
     .eq("id", unitId)
     .eq("organization_id", orgId)
     .maybeSingle();
@@ -277,6 +281,9 @@ export async function consultarPrecoUnidadeVigente(
   }
   if (!unit) {
     return { ok: false, error: "Unidade não encontrada" };
+  }
+  if (unit.cv_crm_stale_since) {
+    return { ok: false, error: "cv_crm_unit_stale", stale_since: unit.cv_crm_stale_since };
   }
   if (unit.status !== "disponivel") {
     return { ok: false, error: "Unidade não está disponível para venda", status: unit.status };

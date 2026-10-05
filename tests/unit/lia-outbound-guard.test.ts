@@ -125,5 +125,198 @@ describe("Lia Outbound Guard (Missão 5D)", () => {
       expect(result.priceGatePassed).toBe(true);
       expect(result.body).toBe(msg);
     });
+
+    test("FAIL-CLOSED quando o valor dito diverge do receipt oficial", () => {
+      const msg = "O valor da unidade 101 é R$ 499.000.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: { price: { valor_cents: 45000000 } },
+          },
+        ],
+      });
+      expect(result.priceGateTriggered).toBe(true);
+      expect(result.priceGatePassed).toBe(false);
+      expect(result.body).toBe(LIA_PRICE_FAILSAFE);
+    });
+
+    test("FAIL-CLOSED para sinal sem sinal_cents oficial no receipt", () => {
+      const msg = "O valor é R$ 450.000 com sinal de R$ 45.000.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: { price: { valor_cents: 45000000 } },
+          },
+        ],
+      });
+      expect(result.priceGatePassed).toBe(false);
+      expect(result.body).toBe(LIA_PRICE_FAILSAFE);
+    });
+
+    test("PERMITE sinal quando valor e sinal coincidem com o receipt", () => {
+      const msg = "O valor é R$ 450.000 com sinal de R$ 45.000.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: {
+              price: {
+                valor_cents: 45000000,
+                sinal_cents: 4500000,
+              },
+            },
+          },
+        ],
+      });
+      expect(result.priceGatePassed).toBe(true);
+      expect(result.body).toBe(msg);
+    });
+
+    test("FAIL-CLOSED para parcelas sem estrutura oficial no receipt", () => {
+      const msg = "O valor é R$ 450.000 com 60 parcelas de R$ 1.500.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: { price: { valor_cents: 45000000 } },
+          },
+        ],
+      });
+      expect(result.priceGatePassed).toBe(false);
+      expect(result.body).toBe(LIA_PRICE_FAILSAFE);
+    });
+
+    test("PERMITE parcelas quando quantidade e valor estão comprovados no receipt", () => {
+      const msg = "O valor é R$ 450.000 com 60 parcelas de R$ 1.500.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: {
+              price: {
+                valor_cents: 45000000,
+                parcelas: { quantidade: 60, valor_cents: 150000 },
+              },
+            },
+          },
+        ],
+      });
+      expect(result.priceGatePassed).toBe(true);
+      expect(result.body).toBe(msg);
+    });
+
+    test("FAIL-CLOSED para condições comerciais sem condicoes_chaves oficial", () => {
+      const msg = "O valor é R$ 450.000, com condições de chaves conforme tabela.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: { price: { valor_cents: 45000000 } },
+          },
+        ],
+      });
+      expect(result.priceGatePassed).toBe(false);
+      expect(result.body).toBe(LIA_PRICE_FAILSAFE);
+    });
+
+
+    test("NAO bloqueia financiamento informado como intencao do cliente", () => {
+      const msg = "Anotado: voce pretende financiar R$ 200 mil.";
+      const result = aplicarGuardrailLiaOutbound(msg, { actorType: "ai_agent" });
+      expect(result.priceGateTriggered).toBe(false);
+      expect(result.priceGatePassed).toBe(true);
+      expect(result.body).toBe(msg);
+    });
+
+    test("FAIL-CLOSED para valor de financiamento sem financiamento oficial", () => {
+      const msg = "O valor de R$ 450.000, com financiamento de R$ 207.920.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: { price: { valor_cents: 45000000 } },
+          },
+        ],
+      });
+      expect(result.priceGateTriggered).toBe(true);
+      expect(result.priceGatePassed).toBe(false);
+      expect(result.body).toBe(LIA_PRICE_FAILSAFE);
+    });
+
+    test("PERMITE financiamento quando valor coincide com o receipt oficial", () => {
+      const msg = "O valor de R$ 450.000, com financiamento de R$ 207.920.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: {
+              price: {
+                valor_cents: 45000000,
+                financiamento: "R$ 207.920,00",
+              },
+            },
+          },
+        ],
+      });
+      expect(result.priceGateTriggered).toBe(true);
+      expect(result.priceGatePassed).toBe(true);
+      expect(result.body).toBe(msg);
+    });
+
+    test("FAIL-CLOSED para mencao de financiamento sem dado oficial", () => {
+      const msg = "Ha financiamento disponivel para esta unidade.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: { price: { valor_cents: 45000000 } },
+          },
+        ],
+      });
+      expect(result.priceGateTriggered).toBe(true);
+      expect(result.priceGatePassed).toBe(false);
+      expect(result.body).toBe(LIA_PRICE_FAILSAFE);
+    });
+
+    test("FAIL-CLOSED quando financiamento dito diverge do receipt oficial", () => {
+      const msg = "O valor de R$ 450.000, com financiamento de R$ 207.920.";
+      const result = aplicarGuardrailLiaOutbound(msg, {
+        actorType: "ai_agent",
+        toolReceipts: [
+          {
+            toolName: "crm_get_unit_price",
+            ok: true,
+            data: {
+              price: {
+                valor_cents: 45000000,
+                financiamento: "R$ 200.000,00",
+              },
+            },
+          },
+        ],
+      });
+      expect(result.priceGatePassed).toBe(false);
+      expect(result.body).toBe(LIA_PRICE_FAILSAFE);
+    });
   });
 });
