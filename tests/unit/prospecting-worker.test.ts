@@ -9,7 +9,10 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   knobs: vi.fn(),
   open: vi.fn(),
+  prospeccaoAberta: vi.fn(),
+  pacing: vi.fn(),
   paradas: vi.fn(),
+  prepare: vi.fn(),
 }));
 vi.mock("@/app/api/v1/messages/_handler", () => ({ sendMessageHandler: mocks.send }));
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
@@ -34,8 +37,13 @@ vi.mock("@/lib/agent-engine/pacing/store", () => ({
 }));
 vi.mock("@/lib/agent-engine/pacing/engine", () => ({
   janelaDeEnvioAberta: mocks.open,
-  decidePacing: () => ({ allow: true, waitMs: 0 }),
+  // A prospecção lê o portão próprio (dias + horas, 0642) — o genérico não é
+  // mais chamado neste worker. Sem estas duas chaves o import morre e TODOS os
+  // casos desta suíte falham com "not a function", não só os de janela.
+  janelaDeProspeccaoAberta: mocks.prospeccaoAberta,
+  decidePacing: mocks.pacing,
   proximaAberturaDaJanela: () => new Date(Date.now() + 3600000),
+  proximaAberturaDaProspeccao: () => new Date(Date.now() + 3600000),
   // O ritmo da esteira fria (`lib/prospecting/ritmo-da-esteira-fria.ts`) deriva
   // o teto diário DESTA função em vez de manter uma tabela de degraus própria.
   // O mock precisa dela, senão o import do worker morre antes de qualquer caso
@@ -57,6 +65,7 @@ vi.mock("@/lib/prospecting/store", () => ({
   withProspectingLock: vi.fn(),
   synchronizeSearch: vi.fn(),
   validateConfig: vi.fn().mockResolvedValue(undefined),
+  prepararCandidatoNoEnvio: mocks.prepare,
 }));
 import { sendNextCandidate, tickProspecting } from "@/lib/prospecting/worker";
 import { OrgNaoOperanteError } from "@/lib/organizacao/operante";
@@ -96,13 +105,14 @@ function database(
     retry_at: null as Date | null,
     last_attempt: null as Date | null,
   },
+  row: Record<string, unknown> = candidate,
 ) {
   return {
     query: vi.fn(async (sql: string) => {
       if (sql.startsWith("select daily_message_limit"))
         return { rows: [{ daily_message_limit: 50 }] };
       if (sql.includes("count(*) filter")) return { rows: [counts] };
-      if (sql.startsWith("select * from prospecting_candidates")) return { rows: [candidate] };
+      if (sql.startsWith("select * from prospecting_candidates")) return { rows: [row] };
       if (sql.startsWith("select published_version_id"))
         return { rows: [{ published_version_id: id, operation_revision: 1 }] };
       return { rows: [] };
@@ -113,6 +123,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.knobs.mockResolvedValue({ knobs: {} });
   mocks.open.mockReturnValue(true);
+  mocks.prospeccaoAberta.mockReturnValue(true);
+  mocks.pacing.mockReturnValue({ allow: true, waitMs: 0 });
   mocks.preflight.mockResolvedValue({ permite: true });
   mocks.guard.mockResolvedValue(undefined);
   mocks.boundary.mockResolvedValue(undefined);
@@ -188,6 +200,13 @@ describe("gradual outreach", () => {
     expect(mocks.generate).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
   });
+  it("pede o ritmo como prospecção: o gate genérico não veta o domingo que os dias próprios liberaram", async () => {
+    await sendNextCandidate({} as never, database() as never, {} as never, campaign);
+    // Sem a flag, o veto de domingo do gate genérico barra a abordagem que o
+    // portão próprio deixou passar: a prospecção de domingo é reagendada para
+    // segunda, calada, mesmo com o domingo marcado na caixa da prospecção.
+    expect(mocks.pacing).toHaveBeenCalledWith(expect.objectContaining({ prospeccao: true }));
+  });
   it("keeps spacing across campaign switches", async () => {
     await sendNextCandidate(
       {} as never,
@@ -198,9 +217,17 @@ describe("gradual outreach", () => {
     expect(mocks.generate).not.toHaveBeenCalled();
   });
   it("stops outside the configured window", async () => {
-    mocks.open.mockReturnValue(false);
-    await sendNextCandidate({} as never, database() as never, {} as never, campaign);
+    mocks.prospeccaoAberta.mockReturnValue(false);
+    const db = database();
+    await sendNextCandidate({} as never, db as never, {} as never, campaign);
     expect(mocks.send).not.toHaveBeenCalled();
+    // Sem tentativa e sem trilha: reagendou para a próxima abertura e voltou.
+    expect(
+      db.query.mock.calls.some(
+        ([q]) => q.includes("update prospecting_campaigns set next_send_at=$3"),
+      ),
+    ).toBe(true);
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
   it("fails closed when channel settings cannot be read", async () => {
     mocks.knobs.mockRejectedValue(new Error("database unavailable"));
@@ -236,15 +263,16 @@ describe("gradual outreach", () => {
 });
 
 describe("tick da prospecção × organização parada", () => {
-  it("exclui as paradas NO SQL, antes do limit — filtrar depois deixaria a parada no topo para sempre", async () => {
-    const parada = "20000000-0000-4000-8000-000000000002";
-    mocks.paradas.mockResolvedValue([parada]);
+  it("exclui as paradas NO SQL, via fn_org_operante, antes do limit — sem lista de ids na query (issue #2015)", async () => {
     const query = vi.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] }));
     await tickProspecting({ query } as never, {} as never);
     const [sql, params] = query.mock.calls[0]!;
-    expect(sql).toMatch(/organization_id <> all\(\$1::uuid\[\]\)/);
-    expect(sql.indexOf("<> all")).toBeLessThan(sql.indexOf("limit 20"));
-    expect(params).toEqual([[parada]]);
+    expect(sql).toMatch(/fn_org_operante/);
+    expect(sql.indexOf("fn_org_operante")).toBeLessThan(sql.indexOf("limit 20"));
+    // Nenhuma lista de ids de org parada é carregada nem passada à query — a
+    // régua SQL decide no banco, e a query não cortaria em `max_rows`.
+    expect(sql).not.toMatch(/organization_id <> all/);
+    expect(params ?? []).toEqual([]);
   });
 });
 
@@ -283,5 +311,105 @@ describe("tick da prospecção × organização que para no meio do envio", () =
     await rodar();
     expect(gravou(db, "status='paused'")).toBe(true);
     expect(gravou(db, "update prospecting_candidates set status='failed',error=$3")).toBe(true);
+  });
+});
+
+describe("funil só no envio (`funnel_entry: on_send`)", () => {
+  const noEnvio = {
+    ...campaign,
+    config: { ...campaign.config, funnel_entry: "on_send" },
+  } as Campaign;
+  /** A empresa está na fila, mas ainda não existe no CRM: sem conversa, contato nem fronteira. */
+  const naFila = {
+    id: "candidate",
+    contact_id: null,
+    lead_id: null,
+    conversation_id: null,
+    service_boundary: null,
+    message_id: "stable-message",
+    phone: "+5511999990000",
+    data: { name: "Example", socials: [] },
+  };
+
+  it("prepara a empresa ANTES de gerar e enviar, e envia com os dados que a preparação criou", async () => {
+    mocks.prepare.mockResolvedValue(candidate);
+    const db = database(undefined, naFila);
+    await sendNextCandidate({} as never, db as never, {} as never, noEnvio);
+    expect(mocks.prepare).toHaveBeenCalledTimes(1);
+    expect(mocks.prepare.mock.calls[0]?.[4]).toMatchObject({
+      id: "candidate",
+      conversation_id: null,
+    });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    const antes = mocks.prepare.mock.invocationCallOrder[0] ?? Infinity;
+    expect(antes, "criar a pegada vem antes do envio").toBeLessThan(
+      mocks.send.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(mocks.send.mock.calls[0]?.[2]).toMatchObject({ conversation_id: id });
+  });
+
+  it("empresa que saiu da fila no caminho (pulada ou recusada pelo CRM): não gera, não envia, não grava tentativa", async () => {
+    mocks.prepare.mockResolvedValue(null);
+    const db = database(undefined, naFila);
+    await sendNextCandidate({} as never, db as never, {} as never, noEnvio);
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(
+      db.query.mock.calls.some(([q]) => String(q).includes("attempted_at=now()")),
+      "sem tentativa: a próxima rodada pega a seguinte",
+    ).toBe(false);
+  });
+
+  it("empresa que já tem conversa não é preparada de novo", async () => {
+    const db = database(undefined, candidate);
+    await sendNextCandidate({} as never, db as never, {} as never, noEnvio);
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("no modo `on_start` (o padrão) a preparação nunca roda, nem para quem estiver sem conversa", async () => {
+    const db = database(undefined, naFila);
+    await expect(
+      sendNextCandidate({} as never, db as never, {} as never, campaign),
+    ).rejects.toMatchObject({ escopo: "candidato" });
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("funil só no envio: a checagem do canal vem ANTES de criar qualquer coisa", () => {
+  const noEnvio = {
+    ...campaign,
+    config: { ...campaign.config, funnel_entry: "on_send" },
+  } as Campaign;
+  const naFila = {
+    id: "candidate",
+    contact_id: null,
+    lead_id: null,
+    conversation_id: null,
+    service_boundary: null,
+    message_id: "stable-message",
+    phone: "+5511999990000",
+    data: { name: "Example", socials: [] },
+  };
+
+  it("canal que recusa a abordagem: a campanha pausa SEM ter deixado contato, negócio nem conversa", async () => {
+    mocks.preflight.mockResolvedValue({ permite: false, motivo: "telefone fora da lista liberada" });
+    const db = database(undefined, naFila);
+    await expect(
+      sendNextCandidate({} as never, db as never, {} as never, noEnvio),
+    ).rejects.toThrow("O canal ainda não permite esta abordagem");
+    expect(mocks.prepare, "recusa do canal vem antes de qualquer criação").not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("a checagem usa o telefone da empresa que ainda está só na fila", async () => {
+    mocks.prepare.mockResolvedValue(candidate);
+    await sendNextCandidate({} as never, database(undefined, naFila) as never, {} as never, noEnvio);
+    expect(mocks.preflight.mock.calls[0]?.[1]).toMatchObject({
+      contactPhoneNumber: "+5511999990000",
+    });
+    const checagem = mocks.preflight.mock.invocationCallOrder[0] ?? Infinity;
+    expect(checagem).toBeLessThan(mocks.prepare.mock.invocationCallOrder[0] ?? 0);
   });
 });

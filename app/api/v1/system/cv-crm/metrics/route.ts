@@ -6,8 +6,8 @@ import { fail, ok } from "@/lib/api/wrappers";
 
 /**
  * GET /api/v1/system/cv-crm/metrics?orgId=&window=24h|7d|30d
- * Retorna agregados das Ãºltimas N horas/dias: contagem de batches por status,
- * taxa de sucesso, tempo mÃ©dio, contagem de stale. Sem payload sensÃ­vel.
+ * Retorna agregados das últimas N horas/dias: contagem de batches por status,
+ * taxa de sucesso, tempo médio, contagem de stale. Sem payload sensível.
  */
 export async function GET(req: NextRequest) {
   const auth = await loadAuthUser();
@@ -17,13 +17,13 @@ export async function GET(req: NextRequest) {
   const orgId = searchParams.get("orgId");
   const windowParam = searchParams.get("window") || "24h";
 
-  // service_role ignora RLS. Sem filtro obrigatÃ³rio de organization_id, qualquer
-  // usuÃ¡rio autenticado vÃª mÃ©tricas agregadas de todos os tenants. Platform admin
-  // vÃª tudo (diagnÃ³stico da instalaÃ§Ã£o); demais sÃ³ veem o prÃ³prio tenant.
+  // service_role ignora RLS. Sem filtro obrigatório de organization_id, qualquer
+  // usuário autenticado vê métricas agregadas de todos os tenants. Platform admin
+  // vê tudo (diagnóstico da instalação); demais só veem o próprio tenant.
   if (!auth.is_platform_admin && !orgId) {
     return fail(
       "forbidden",
-      "orgId Ã© obrigatÃ³rio para usuÃ¡rios que nÃ£o sÃ£o administrador da instalaÃ§Ã£o.",
+      "orgId é obrigatório para usuários que não são administrador da instalação.",
       403,
     );
   }
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   const supabase = createAdminClient();
 
-  // Query base com filtro de tenant e perÃ­odo
+  // Query base com filtro de tenant e período
   let baseQuery = supabase
     .from("cv_crm_ingestion_logs")
     .select(
@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
     return fail("db_query_failed", error.message, 500);
   }
 
-  // AgregaÃ§Ãµes em memÃ³ria (sem expor dados brutos)
+  // Agregações em memória (sem expor dados brutos)
   const totalBatches = logs.length;
   const completedBatches = logs.filter((l) => l.status === "completed").length;
   const failedBatches = logs.filter((l) => l.status === "failed").length;
@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
   const totalInvalid = logs.reduce((sum, l) => sum + (l.invalid_records || 0), 0);
   const totalProcessed = logs.reduce((sum, l) => sum + (l.processed_records || 0), 0);
 
-  // Tempo mÃ©dio de duraÃ§Ã£o (em segundos)
+  // Tempo médio de duração (em segundos)
   const durations = logs
     .filter((l) => l.started_at && l.finished_at)
     .map((l) => (new Date(l.finished_at!).getTime() - new Date(l.started_at!).getTime()) / 1000);
@@ -131,7 +131,7 @@ export async function GET(req: NextRequest) {
     stale_units: staleUnits,
   };
 
-  // Auditoria de leitura â€” sem payload sensÃ­vel
+  // Auditoria de leitura — sem payload sensível
   await audit({
     action: "cv_crm.metrics_viewed",
     actorUserId: auth.id,

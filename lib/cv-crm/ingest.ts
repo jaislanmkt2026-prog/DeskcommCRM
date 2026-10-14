@@ -2,6 +2,7 @@ import { fetchBatch } from "./adapter";
 import { reconcileStaleRecords } from "./reconcile";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
+import { randomId } from "@/lib/random-id";
 
 type IngestSummary = {
   batch_id: string;
@@ -51,7 +52,7 @@ export async function runCvCrmIngest(opts?: {
    */
   batchSize?: number;
 }): Promise<IngestSummary> {
-  const batchId = crypto.randomUUID();
+  const batchId = randomId();
   const configuredOrgId = env.CV_CRM_ORG_ID.trim();
   const requestedOrgId = opts?.orgId?.trim();
 
@@ -241,9 +242,7 @@ export async function runCvCrmIngest(opts?: {
     if (validationRpcError) {
       invalidCount += 1;
       blockingError = true;
-      errors.push(
-        `${record.external_id}: erro na validação RPC: ${validationRpcError.message}`,
-      );
+      errors.push(`${record.external_id}: erro na validação RPC: ${validationRpcError.message}`);
       continue;
     }
 
@@ -277,9 +276,7 @@ export async function runCvCrmIngest(opts?: {
     if (stagingError) {
       invalidCount += 1;
       blockingError = true;
-      errors.push(
-        `${record.external_id}: falha ao escrever staging: ${stagingError.message}`,
-      );
+      errors.push(`${record.external_id}: falha ao escrever staging: ${stagingError.message}`);
       continue;
     }
 

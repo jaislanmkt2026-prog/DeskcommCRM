@@ -77,6 +77,8 @@ export const ALVO_DE_FUNIL: Record<string, AlvoDeFunil> = {
   crm_retomar_lead: "funil_vem_do_lead",
 
   // ---- tocam o lead de lado: RETORNO INTERNO, não estado do card ----
+  crm_create_campaign: "sem_funil",
+  crm_run_campaign_action: "sem_funil",
   // ⚠️ Este comentário dizia "agenda", e a palavra passou a apontar para a coisa
   // errada quando o produto ganhou agenda de verdade (compromisso com hora marcada,
   // `calendar_appointments`). Retorno é decisão nossa de voltar a falar e não ocupa o
@@ -310,7 +312,11 @@ export async function podeChamarFerramenta(entrada: {
         // Falha FECHADA: chamador sem o resolvedor não vira liberação. Um alvo que
         // depende de uma dependência opcional precisa recusar quando ela falta,
         // senão basta esquecer de passá-la para o escopo sumir.
-        return { permitido: false, motivo: "indisponivel", detalhe: "resolvedor de contato ausente" };
+        return {
+          permitido: false,
+          motivo: "indisponivel",
+          detalhe: "resolvedor de contato ausente",
+        };
       }
 
       let r: ResolucaoDeContato;

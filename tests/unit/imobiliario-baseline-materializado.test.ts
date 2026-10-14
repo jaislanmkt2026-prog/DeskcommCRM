@@ -38,9 +38,10 @@ describe("baseline imobiliário materializado", () => {
   it("documenta materializadas e migrations deliberadamente fora de aplicação", () => {
     for (const nome of [
       "0433_fundacao_imobiliaria",
-      "0502_property_proposals_reservations",
-      "0503_property_proposals_reservations_history",
-      "0504_price_lists",      "0429_document_checklist_items",
+      "0645_property_proposals_reservations",
+      "0646_property_proposals_reservations_history",
+      "0647_price_lists",
+      "0429_document_checklist_items",
     ]) expect(manifest).toContain(`\`${nome}\``);
 
     expect(manifest).toContain("_legacy/20260924010000_0384_business_flow_DEPRECATED_BEFORE_APPLY.sql");
