@@ -181,10 +181,10 @@ describe("a organização não consegue se trancar do lado de fora", () => {
 describe("medição da folga (pergunta de aceite da issue #1341)", () => {
   /**
    * Baseline: a configuração de HOJE — nenhuma escolha, nem da empresa nem do
-   * vínculo. É o número que o issue publica (15 itens: atendimento 4, CRM 3,
-   * IA 3, canais 2, análise 3), medido aqui pelo módulo que alimenta o menu.
+   * vínculo. São 15 itens: atendimento 4, CRM 3, imobiliário 1, IA 2, canais 2,
+   * análise 3. O teto medido continua 15, então não sobra folga.
    */
-  it("hoje: 15 itens no menu lateral, folga 0 (é o teto da dobra a 1280x900)", () => {
+  it("hoje: 15 itens no menu lateral, folga 0 até o teto da dobra a 1280x900", () => {
     expect(itensNoMenuLateral(INTERFACE_COMPLETA)).toBe(15);
     // `undefined` é o caminho de quem não tem escolha nenhuma gravada
     expect(itensNoMenuLateral(undefined)).toBe(15);

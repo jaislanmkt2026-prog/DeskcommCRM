@@ -81,3 +81,7 @@ Ordem definida pelo Rafael: **PRD → Regras de Negócio → Specs → Epics →
 - [ ] Quebrar stories em tasks técnicas
 - [ ] Sequenciar com dependências explícitas
 - [ ] Cronograma e marcos
+
+## Dívidas registradas — JS Imóveis
+
+- [ ] **Classificação canônica de dados imobiliários de homologação.** A Missão 7.1 precisou excluir o empreendimento de homologação pelo UUID `a1b2c3d4-e5f6-47a8-b9c0-d1e2f3a4b5c6` em `app/app/imobiliario/page.tsx`. Substituir essa exceção por classificação explícita e canônica (`commercial` / `homologation` / `test`, ou vocabulário equivalente aprovado) antes de ampliar ingestão comercial. O filtro atual permanece intacto até essa migração.

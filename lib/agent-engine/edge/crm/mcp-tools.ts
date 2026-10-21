@@ -28,6 +28,7 @@ import type { McpContext } from '@/lib/mcp/types';
 import { modulosLigados } from '@/lib/instalacao/modulos';
 import { capacidadesDaOrganizacao } from '@/lib/organizacao/capacidades';
 import { filtrarToolsComCallbackDesabilitado } from '@/lib/followup/callback-policy';
+import { isPreAtendimentoImobiliario } from '../../guardrails/lia-conversation-policy';
 
 import type { Logger } from '../../obs/logger';
 import type { CrmEdgeConfig } from './mcp-client';
@@ -77,7 +78,11 @@ export async function buildMcpTurnTools(
     agentConfig.toolIds,
     agentConfig.followup,
   );
-  const allowed = callbackFiltered.filter((id) => !BLOCKED_TOOL_IDS.has(id));
+  const preAtendimentoImobiliario = isPreAtendimentoImobiliario(callbackFiltered);
+  const proposalToolIds = new Set(["crm_draft_proposal", "crm_preparar_proposta"]);
+  const allowed = callbackFiltered.filter(
+    (id) => !BLOCKED_TOOL_IDS.has(id) && !(preAtendimentoImobiliario && proposalToolIds.has(id)),
+  );
   const blocked = agentConfig.toolIds.filter((id) => BLOCKED_TOOL_IDS.has(id));
   if (blocked.length > 0) {
     // A tela não oferece mais estas capacidades (a rota serve `marcavel: false`
@@ -90,6 +95,19 @@ export async function buildMcpTurnTools(
       motivos: blocked.map((id) => motivoDoHarness(id)),
     });
   }
+  const blockedProposalToolIds = preAtendimentoImobiliario
+    ? callbackFiltered.filter((id) => proposalToolIds.has(id))
+    : [];
+  if (
+    preAtendimentoImobiliario &&
+    (agentConfig.proposalAiDraftEnabled || blockedProposalToolIds.length > 0)
+  ) {
+    log.warn("pre-atendimento imobiliario recusou configuracao de proposta", {
+      blocked_tool_ids: blockedProposalToolIds,
+      proposal_ai_draft_enabled: agentConfig.proposalAiDraftEnabled,
+    });
+  }
+
   if (allowed.length === 0) {
     return null;
   }
@@ -167,7 +185,7 @@ export async function buildMcpTurnTools(
     auth,
     toolIds: allowed,
     handoffToolEnabled: false,
-    proposalAiDraftEnabled: agentConfig.proposalAiDraftEnabled,
+    proposalAiDraftEnabled: preAtendimentoImobiliario ? false : agentConfig.proposalAiDraftEnabled,
     handoffSignal,
     // "Em que negócios ele pode mexer" — o campo é OPCIONAL na interface, e
     // omiti-lo não é neutro: `escopo ?? []` e vazio significa NENHUM. Este

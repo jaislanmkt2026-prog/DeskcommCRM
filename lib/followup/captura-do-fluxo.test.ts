@@ -249,4 +249,3 @@ describe("revisão adversarial do PR 2", () => {
     expect(respostaTemLastro(ano, "2000", "é uma 2000", { perguntaAtual: true })).toBe(true);
   });
 });
-

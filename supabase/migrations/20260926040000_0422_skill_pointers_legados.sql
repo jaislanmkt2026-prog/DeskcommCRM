@@ -66,4 +66,3 @@ create unique index if not exists uniq_skill_pointers_org
 create unique index if not exists uniq_skill_pointers_platform
   on public.skill_pointers (name)
   where organization_id is null;
-

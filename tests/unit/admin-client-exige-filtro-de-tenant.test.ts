@@ -102,8 +102,25 @@ const RAIZES = ["app", "lib", "workers"] as const;
 
 /** Métodos do PostgREST cujo primeiro argumento restringe a consulta. */
 const FILTROS = new Set([
-  "eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "is", "in", "contains",
-  "containedBy", "overlaps", "or", "and", "filter", "match", "not", "textSearch",
+  "eq",
+  "neq",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "like",
+  "ilike",
+  "is",
+  "in",
+  "contains",
+  "containedBy",
+  "overlaps",
+  "or",
+  "and",
+  "filter",
+  "match",
+  "not",
+  "textSearch",
 ]);
 
 const CRIAM_LINHA = new Set(["insert", "upsert"]);
@@ -178,6 +195,14 @@ const ESTEIRAS: readonly { caminho: string; motivo: string }[] = [
  * Exceções da R3, cadeia a cadeia, com a razão escrita. Só encolhe.
  */
 const CHAVE_SEM_TENANT_LIBERADA: readonly { arquivo: string; tabela: string; motivo: string }[] = [
+  ...["cv_crm_ingestion_logs", "real_estate_developments", "real_estate_units"].map((tabela) => ({
+    arquivo: "app/api/v1/system/cv-crm/metrics/route.ts",
+    tabela,
+    motivo:
+      "Métrica agregada do CV CRM: quem não é administrador da instalação é recusado (403) sem " +
+      "`orgId` e só passa com `orgId` de que seja membro; o filtro por organização entra quando há " +
+      "`orgId`. Só o administrador da instalação lê o agregado geral, sem payload sensível.",
+  })),
   {
     arquivo: "app/api/v1/ai/skills/[name]/route.ts",
     tabela: "skill_versions",
@@ -195,8 +220,7 @@ const CHAVE_SEM_TENANT_LIBERADA: readonly { arquivo: string; tabela: string; mot
   {
     arquivo: "app/app/ai/skills/page.tsx",
     tabela: "skill_versions",
-    motivo:
-      "Mesma leitura da API de skills, feita no servidor da página.",
+    motivo: "Mesma leitura da API de skills, feita no servidor da página.",
   },
   {
     arquivo: "lib/extensions/service.ts",
@@ -338,7 +362,8 @@ function analisar(caminho: string, doTenant: ReadonlySet<string>): Cadeia[] {
         // O que o autor ESCREVEU na cadeia: payload inline, `onConflict` e o
         // argumento de cada filtro. Uma variável de payload não aparece aqui —
         // é o caso que `textoDaDeclaracao` cobre.
-        const ultima = passos.length > 0 ? (passos[passos.length - 1] as { chamada: ts.CallExpression }) : null;
+        const ultima =
+          passos.length > 0 ? (passos[passos.length - 1] as { chamada: ts.CallExpression }) : null;
         const fim = ultima === null ? no.getEnd() : ultima.chamada.getEnd();
         const textoDaCadeia = fonte.text.slice(no.getStart(), fim);
 
@@ -378,7 +403,8 @@ const DO_TENANT = tabelasTenantAware();
 const ARQUIVOS = arquivosDeCodigo(RAIZES);
 const CADEIAS = ARQUIVOS.flatMap((a) => analisar(a, DO_TENANT));
 
-const emPlataforma = (c: Cadeia): boolean => PLATAFORMA.some((p) => c.arquivo.startsWith(p.caminho));
+const emPlataforma = (c: Cadeia): boolean =>
+  PLATAFORMA.some((p) => c.arquivo.startsWith(p.caminho));
 
 /** Uma linha por achado, para a falha dizer ONDE — e não só QUANTOS. */
 const descreverCadeia = (c: Cadeia): string => `${c.arquivo}:${c.linha} ${c.tabela}`;
@@ -386,7 +412,9 @@ const descreverCadeia = (c: Cadeia): string => `${c.arquivo}:${c.linha} ${c.tabe
 const escritasSemTenant = CADEIAS.filter((c) => c.criaLinha && !c.carregaOTenant);
 const semFiltroNenhum = CADEIAS.filter((c) => !c.criaLinha && !c.filtra && !c.carregaOTenant)
   .filter((c) => !emPlataforma(c))
-  .filter((c) => !SEM_FILTRO_LIBERADO.some((e) => e.arquivo === c.arquivo && e.tabela === c.tabela));
+  .filter(
+    (c) => !SEM_FILTRO_LIBERADO.some((e) => e.arquivo === c.arquivo && e.tabela === c.tabela),
+  );
 
 const emEsteira = (c: Cadeia): boolean => ESTEIRAS.some((e) => c.arquivo.startsWith(e.caminho));
 
@@ -397,7 +425,9 @@ const porChaveSemTenant = CADEIAS.filter((c) => !c.criaLinha && c.filtra && !c.c
 const chaveSemTenant = porChaveSemTenant
   .filter((c) => !emPlataforma(c))
   .filter((c) => !emEsteira(c))
-  .filter((c) => !CHAVE_SEM_TENANT_LIBERADA.some((e) => e.arquivo === c.arquivo && e.tabela === c.tabela));
+  .filter(
+    (c) => !CHAVE_SEM_TENANT_LIBERADA.some((e) => e.arquivo === c.arquivo && e.tabela === c.tabela),
+  );
 
 describe("o cliente de serviço também responde ao tenant", () => {
   it("a varredura enxerga o schema e os arquivos (guarda de vacuidade)", () => {
@@ -412,10 +442,15 @@ describe("o cliente de serviço também responde ao tenant", () => {
 
   it("a varredura enxerga quem pega o cliente de serviço (controle positivo)", () => {
     const comAdmin = ARQUIVOS.filter(
-      (a) => nomesDoClienteAdmin(ts.createSourceFile(a, readFileSync(a, "utf8"), ts.ScriptTarget.Latest, true)).size > 0,
+      (a) =>
+        nomesDoClienteAdmin(
+          ts.createSourceFile(a, readFileSync(a, "utf8"), ts.ScriptTarget.Latest, true),
+        ).size > 0,
     );
     expect(comAdmin.length).toBeGreaterThan(100);
-    expect(CADEIAS.length, "nenhuma cadeia de service role medida — a régua cegou").toBeGreaterThan(80);
+    expect(CADEIAS.length, "nenhuma cadeia de service role medida — a régua cegou").toBeGreaterThan(
+      80,
+    );
   });
 
   it("a varredura reconhece o payload que carrega o tenant (controle positivo)", () => {
@@ -423,9 +458,13 @@ describe("o cliente de serviço também responde ao tenant", () => {
     // (`insertRow`) com `organization_id` e só depois insere. Se ele aparecer
     // como achado, a régua está lendo a cadeia e não a declaração.
     const gemeo = CADEIAS.find(
-      (c) => c.arquivo === "workers/ai-response-worker.ts" && c.tabela === "messages" && c.criaLinha,
+      (c) =>
+        c.arquivo === "workers/ai-response-worker.ts" && c.tabela === "messages" && c.criaLinha,
     );
-    expect(gemeo, "a inserção da mensagem no worker sumiu — a régua perdeu a referência").toBeDefined();
+    expect(
+      gemeo,
+      "a inserção da mensagem no worker sumiu — a régua perdeu a referência",
+    ).toBeDefined();
     expect(gemeo?.carregaOTenant).toBe(true);
   });
 
@@ -466,10 +505,14 @@ describe("o cliente de serviço também responde ao tenant", () => {
         alcancadas.length,
         `\`${p.caminho}\` está declarada como superfície de plataforma e não tem mais cadeia nenhuma — remova a declaração`,
       ).toBeGreaterThan(0);
-      expect(p.motivo.trim().length, `declaração sem razão escrita: ${p.caminho}`).toBeGreaterThan(20);
+      expect(p.motivo.trim().length, `declaração sem razão escrita: ${p.caminho}`).toBeGreaterThan(
+        20,
+      );
     }
     for (const e of SEM_FILTRO_LIBERADO) {
-      const achado = CADEIAS.find((c) => c.arquivo === e.arquivo && c.tabela === e.tabela && !c.filtra);
+      const achado = CADEIAS.find(
+        (c) => c.arquivo === e.arquivo && c.tabela === e.tabela && !c.filtra,
+      );
       expect(
         achado,
         `exceção órfã: \`${e.arquivo}\` já não alcança \`${e.tabela}\` sem filtro — remova de SEM_FILTRO_LIBERADO`,
@@ -487,7 +530,9 @@ describe("o cliente de serviço também responde ao tenant", () => {
       expect(e.motivo.trim().length, `esteira sem razão escrita: ${e.caminho}`).toBeGreaterThan(20);
     }
     for (const e of CHAVE_SEM_TENANT_LIBERADA) {
-      const achado = porChaveSemTenant.find((c) => c.arquivo === e.arquivo && c.tabela === e.tabela);
+      const achado = porChaveSemTenant.find(
+        (c) => c.arquivo === e.arquivo && c.tabela === e.tabela,
+      );
       expect(
         achado,
         `exceção órfã: \`${e.arquivo}\` já não alcança \`${e.tabela}\` sem o tenant — remova de CHAVE_SEM_TENANT_LIBERADA`,

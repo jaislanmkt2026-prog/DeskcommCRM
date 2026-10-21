@@ -1,0 +1,10 @@
+{
+ "entity_type": "price_list_item",
+ "external_id": "CV-PLI-INVALID",
+ "payload": {
+ "price_list_id": "CV-PL-2024-Q4",
+ "unit_id": "CV-UNIT-101",
+ "valor_cents": "abc",
+ "status": "ativo"
+ }
+}

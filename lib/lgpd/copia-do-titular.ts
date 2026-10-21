@@ -99,6 +99,9 @@ export const O_QUE_FICA = {
   appointments: "os compromissos dele, com o link da reunião e a anotação que o PDF já imprime",
   sales: "as compras dele e por que foram canceladas ou estornadas",
   proposals: "as propostas comerciais enviadas a ele",
+  imob_checklist: "os documentos que lhe foram pedidos na compra do imóvel e em que situação estão",
+  imob_negociacoes: "as negociações imobiliárias dele: imóvel, unidade, estágio e valor",
+  imob_propostas: "as propostas de imóvel feitas a ele: unidade, tabela de preço, condições e situação",
   tasks: "o que se combinou fazer para ele",
   webhook_captures:
     "o que ele enviou num formulário, com o IP e o navegador de onde enviou: dado dele, origem do contato (art. 19, II)",

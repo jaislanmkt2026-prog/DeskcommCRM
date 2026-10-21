@@ -341,6 +341,14 @@ const PROVA_PROPRIA: readonly Excecao[] = [
       "isolamento é medido num sentido só (org de teste → outra). Migration 0482.",
   },
   {
+    tabela: "cv_crm_staging",
+    razao: "tests/invariants/cv-crm-staging.test.ts -- dois tenants reais por JWT via countAs: cada viewer enxerga somente a propria linha para o mesmo batch_id; authenticated tambem e impedido de escrever staging diretamente.",
+  },
+  {
+    tabela: "cv_crm_ingestion_logs",
+    razao: "tests/invariants/cv-crm-staging.test.ts -- dois tenants reais por JWT via countAs: o mesmo batch_id existe nas duas organizacoes e cada viewer enxerga somente o log da propria organizacao.",
+  },
+  {
     tabela: "cobranca_assinaturas",
     razao:
       "tests/invariants/cobranca-isolamento.test.ts — dois tenants reais por JWT: " +

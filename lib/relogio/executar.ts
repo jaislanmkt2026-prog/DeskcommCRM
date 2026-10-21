@@ -1,4 +1,5 @@
 import { recoverStuckMessages } from "@/app/api/v1/cron/recover-stuck-messages/route";
+import { runCvCrmIngest } from "@/lib/cv-crm/ingest";
 import { idsDoContatoEGemeos } from "@/lib/channels/contato-por-telefone";
 import { drainEventLog } from "@/lib/event-log/drain";
 import { ensureHandlersRegistered } from "@/lib/event-log/register-handlers";
@@ -19,6 +20,10 @@ import { logger } from "@/lib/logger";
 import { STATUS_OPERANTE, ehOperante, statusDaOrgEmbutida } from "@/lib/organizacao/operante";
 import { runRoutingWorker } from "@/lib/routing/worker";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { alertarExcecaoCrivo } from "@/lib/system/crivo-alerts";
+import { executarCicloCrivo } from "@/lib/system/crivo-cycle";
+import { executarRollbackSeNecessario } from "@/lib/system/crivo-rollback";
+import { executarCrivoUpstream } from "@/lib/system/upstream-monitor";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type ResultadoDeTarefa = {
@@ -44,7 +49,10 @@ async function enfileirarFollowup(job: FollowupJobRequest): Promise<void> {
  * batido. Aqui lemos a última inbound (gêmeos de telefone inclusive) e
  * avançamos quem já respondeu.
  */
-export async function aplicarRespostasQueChegaram(admin: SupabaseClient, deps: TickDeps): Promise<number> {
+export async function aplicarRespostasQueChegaram(
+  admin: SupabaseClient,
+  deps: TickDeps,
+): Promise<number> {
   // Org parada não avança fluxo (migration 0501 — o claim do motor também a pula).
   // O corte é no banco, ANTES do `limit`: o embed `!inner` + o filtro de
   // status. Filtrar só em memória deixaria as linhas da org parada (suspender não
@@ -116,7 +124,11 @@ export async function executarTickDoRelogio(): Promise<{
   const uma = async (id: string, fn: () => Promise<unknown>): Promise<void> => {
     try {
       const r = await fn();
-      tarefas.push({ id, ok: true, detalhe: r === undefined ? undefined : JSON.stringify(r).slice(0, 400) });
+      tarefas.push({
+        id,
+        ok: true,
+        detalhe: r === undefined ? undefined : JSON.stringify(r).slice(0, 400),
+      });
     } catch (err) {
       const detalhe = err instanceof Error ? err.message : String(err);
       logger.warn("[relogio] tarefa falhou", { id, error: detalhe });
@@ -192,6 +204,52 @@ export async function executarTickDoRelogio(): Promise<{
   await uma("recover-stuck-messages", async () => {
     const summary = await recoverStuckMessages(admin, new Date(), "relogio");
     if (summary.failed > 0) mexeu = true;
+    return summary;
+  });
+
+  // P0-A Missão 7.7: scheduler REAL do Crivo. O upstream-monitor já respeita
+  // kill switch, environment e intervalo de 6h internamente; aqui só garantimos
+  // que o tick dispara a verificação sem depender de cron externo.
+  await uma("crivo-upstream-check", async () => {
+    const resultado = await executarCrivoUpstream({ db: admin });
+    if (resultado.result !== "no_change") mexeu = true;
+    return resultado;
+  });
+
+  // P0-A+B integração: após detectar/analisar, o ciclo decide se despacha
+  // (risco BAIXO + gates verdes) ou para (fail-closed). Roda em todo tick;
+  // o próprio ciclo é idempotente e curto quando não há update_available.
+  let cicloResultado: Awaited<ReturnType<typeof executarCicloCrivo>> = {
+    fase: "skipped",
+    motivo: "não executado",
+  };
+  await uma("crivo-cycle", async () => {
+    cicloResultado = await executarCicloCrivo({ db: admin });
+    if (cicloResultado.fase === "dispatched" || cicloResultado.fase === "failed") mexeu = true;
+    return cicloResultado;
+  });
+
+  // P0-C Missão 7.7: rollback automático de runs stale ou falhos.
+  // Monitora system_update_runs e marca failed_rolled_back quando health
+  // pós-aplicação não confirma sucesso dentro da janela.
+  let rollbacksResultados: Awaited<ReturnType<typeof executarRollbackSeNecessario>> = [];
+  await uma("crivo-rollback", async () => {
+    rollbacksResultados = await executarRollbackSeNecessario({ db: admin });
+    const houveRollback = rollbacksResultados.some((r) => r.acao === "rolled_back");
+    if (houveRollback) mexeu = true;
+    return rollbacksResultados;
+  });
+
+  // P1-C Missão 7.7: alerta de exceção ao dono quando ciclo bloqueia/falha
+  // ou rollback executa. Dedup por ref_kind (mesma semântica de cache alert).
+  await uma("crivo-alerts", async () => {
+    const alerta = await alertarExcecaoCrivo(admin, cicloResultado, rollbacksResultados);
+    if (alerta.alerted) mexeu = true;
+    return alerta;
+  });
+
+  await uma("cv-crm-ingest", async () => {
+    const summary = await runCvCrmIngest();
     return summary;
   });
 

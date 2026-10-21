@@ -18,6 +18,7 @@ import { audit } from "@/lib/audit";
 import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CHANGELOG_MAX_BYTES } from "@/lib/system/changelog";
+import { resolveCrivoEnvironment, type CrivoLifecycleEvent } from "@/lib/system/crivo-control";
 import { canTransition, type RunStatus } from "@/lib/system/update-run";
 import { logger } from "@/lib/logger";
 
@@ -48,7 +49,7 @@ const heartbeat = z.object({
 const runProgress = z.object({
   kind: z.literal("run_progress"),
   run_id: z.string().uuid(),
-  step: z.enum(["backup", "codigo", "banco"]),
+  step: z.enum(["backup", "codigo", "banco", "rollback"]),
 });
 
 const runResult = z.object({
@@ -118,6 +119,28 @@ function secretMatches(provided: string): boolean {
   });
 }
 
+async function appendCrivoLifecycleEvent(
+  db: ReturnType<typeof createAdminClient>,
+  event: CrivoLifecycleEvent,
+): Promise<void> {
+  const { data: latest, error: readError } = await db
+    .from("system_upstream_checks")
+    .select("id,events")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (readError || !latest?.id) {
+    logger.warn("[system/agent] evento do Crivo não pôde ser localizado", { event });
+    return;
+  }
+  const events = Array.isArray(latest.events) ? latest.events : [];
+  const { error } = await db
+    .from("system_upstream_checks")
+    .update({ events: [...events, event] })
+    .eq("id", latest.id);
+  if (error) logger.warn("[system/agent] evento do Crivo não pôde ser gravado", { event });
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
   const auth = req.headers.get("authorization") ?? "";
   const bearer = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
@@ -154,6 +177,31 @@ export async function POST(req: NextRequest): Promise<Response> {
       return fail("internal_error", "Não consegui gravar o estado.", 500);
     }
 
+    const environment = resolveCrivoEnvironment();
+    if (!environment.ok) {
+      logger.warn("[system/agent] Crivo sem ambiente explícito; execução bloqueada", { reason: environment.reason });
+      return ok({ update_requested: false, run_id: null });
+    }
+
+    const { data: controlState, error: controlStateError } = await db
+      .from("system_upstream_state")
+      .select("crivo_environment,kill_switch,change_fingerprint")
+      .eq("id", 1)
+      .maybeSingle();
+    if (controlStateError || !controlState) {
+      logger.error("[system/agent] heartbeat não conseguiu ler o controle do Crivo", {
+        error: controlStateError?.message ?? "state_missing",
+      });
+      return fail("internal_error", "Não consegui checar o controle da atualização.", 500);
+    }
+    if (
+      controlState.kill_switch ||
+      controlState.crivo_environment !== environment.environment ||
+      !controlState.change_fingerprint
+    ) {
+      return ok({ update_requested: false, run_id: null });
+    }
+
     // "Há pedido?" tem UMA fonte de verdade: o run em `dispatched`. O flag
     // `update_requested_at` respondia a mesma pergunta por outro caminho — e
     // como os dois writes do POST /update não são uma transação, bastava o
@@ -169,7 +217,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     // um `update_requested: false` otimista.
     const { data: run, error: runLookupError } = await db
       .from("system_update_runs")
-      .select("id, status")
+      .select("id, status, crivo_environment, change_fingerprint")
       .eq("status", "dispatched")
       .order("dispatched_at", { ascending: false })
       .limit(1)
@@ -180,6 +228,15 @@ export async function POST(req: NextRequest): Promise<Response> {
         error: runLookupError.message,
       });
       return fail("internal_error", "Não consegui checar o pedido de atualização.", 500);
+    }
+
+    if (
+      run &&
+      (run.crivo_environment !== environment.environment ||
+        run.change_fingerprint !== controlState.change_fingerprint)
+    ) {
+      logger.warn("[system/agent] run pendente não corresponde ao estado atual do Crivo", { runId: run.id });
+      return ok({ update_requested: false, run_id: null });
     }
 
     return ok({ update_requested: Boolean(run), run_id: run?.id ?? null });
@@ -212,6 +269,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       .from("system_update_runs")
       .update({ last_step: payload.step })
       .eq("id", payload.run_id);
+    if (!error) {
+      if (payload.step === "backup") await appendCrivoLifecycleEvent(db, "backup_started");
+      if (payload.step === "codigo") await appendCrivoLifecycleEvent(db, "backup_completed");
+      if (payload.step === "rollback") await appendCrivoLifecycleEvent(db, "rollback_started");
+    }
     if (error) {
       logger.error("[system/agent] run_progress falhou", { error: error.message, runId: payload.run_id });
       return fail("internal_error", "Não consegui gravar o passo.", 500);
@@ -257,6 +319,12 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // Nada a "limpar" além disto: fechar o run É o fim do pedido, porque o run
   // é a única fonte da verdade sobre haver pedido (ver o heartbeat acima).
+
+  if (payload.status === "failed_rolled_back") {
+    await appendCrivoLifecycleEvent(db, "rollback_completed");
+  } else if (payload.status === "failed") {
+    await appendCrivoLifecycleEvent(db, "failed");
+  }
 
   await audit({
     action: "system.update_finished",

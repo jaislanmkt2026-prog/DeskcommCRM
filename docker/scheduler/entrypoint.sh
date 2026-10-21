@@ -91,6 +91,7 @@ CRONS="
 # com prazo na janela, com responsável, e que ainda não virou item da Central.
 */5 * * * *|45|api/v1/cron/task-reminder
 */15 * * * *|45|api/v1/cron/agenda-expira-pendentes
+*/15 * * * *|300|api/v1/cron/cv-crm-ingest
 */15 * * * *|60|api/v1/cron/risk-watcher
 # O CASO PARADO. De hora em hora, e não a cada 5 minutos: o prazo é de 24h, e
 # uma varredura mais frequente só gastaria consulta para descobrir o mesmo nada.
@@ -139,6 +140,9 @@ CRONS="
 # pagar, e a diferença entre nascer às 5h ou às 17h não muda nada para quem paga.
 # Barato: uma consulta por instalação, e quem não tem molde nenhum sai na hora.
 50 5 * * *|60|api/v1/cron/recurring-entries
+# O CRIVO INTERNO. A cada 6 horas: só consulta GitHub público, compara o delta
+# e registra o estado da instalação. Nunca aplica update, migration ou merge.
+17 */6 * * *|120|api/v1/cron/upstream-check
 "
 
 # CRONTAB_PATH é ponto de injeção do teste (tests/shell/scheduler-entrypoint.test.sh).

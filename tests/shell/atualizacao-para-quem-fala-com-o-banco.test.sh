@@ -293,10 +293,15 @@ echo "caso 17 — o gatilho cobre INTERRUPCAO, nao so saida normal"
 # `trap ... EXIT` sozinho nao dispara em todos os casos — e a instalacao fica com
 # as pecas paradas, exatamente o desfecho medido.
 UP="$(cat "$RAIZ/hostgator-setup-kit/update.sh")"
-case "$UP" in
-  *"trap restaurar_servicos EXIT INT TERM HUP"*) ok "cobre EXIT, INT, TERM e HUP" ;;
-  *) nao "gatilho cobre sinais" "trap ... EXIT INT TERM HUP" "so EXIT" ;;
-esac
+if grep -qF 'trap finalizar_update_supervisionado EXIT' <<<"$UP" \
+  && grep -qF "trap 'exit 130' INT" <<<"$UP" \
+  && grep -qF "trap 'exit 143' TERM HUP" <<<"$UP"; then
+  ok "cobre EXIT, INT, TERM e HUP"
+elif grep -qF 'trap restaurar_servicos EXIT INT TERM HUP' <<<"$UP"; then
+  ok "cobre EXIT, INT, TERM e HUP"
+else
+  nao "gatilho cobre sinais" "EXIT + handlers INT/TERM/HUP" "cobertura incompleta"
+fi
 
 
 echo "caso 18 — o banco RELIGA logo depois do banco, nao no fim do script"

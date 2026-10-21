@@ -77,6 +77,8 @@ export const ALVO_DE_FUNIL: Record<string, AlvoDeFunil> = {
   crm_retomar_lead: "funil_vem_do_lead",
 
   // ---- tocam o lead de lado: RETORNO INTERNO, não estado do card ----
+  crm_create_campaign: "sem_funil",
+  crm_run_campaign_action: "sem_funil",
   // ⚠️ Este comentário dizia "agenda", e a palavra passou a apontar para a coisa
   // errada quando o produto ganhou agenda de verdade (compromisso com hora marcada,
   // `calendar_appointments`). Retorno é decisão nossa de voltar a falar e não ocupa o
@@ -156,6 +158,10 @@ export const ALVO_DE_FUNIL: Record<string, AlvoDeFunil> = {
   crm_create_webhook_source: "sem_funil",
   crm_set_webhook_source_active: "sem_funil",
   crm_set_automation_rule_active: "sem_funil",
+  crm_save_lead_preferences: "funil_vem_do_lead",
+  crm_save_attendance_summary: "funil_vem_do_lead",
+  crm_request_handoff_imobiliario: "sem_funil",
+  crm_update_document_checklist_item: "sem_funil",
 };
 
 /**
@@ -306,7 +312,11 @@ export async function podeChamarFerramenta(entrada: {
         // Falha FECHADA: chamador sem o resolvedor não vira liberação. Um alvo que
         // depende de uma dependência opcional precisa recusar quando ela falta,
         // senão basta esquecer de passá-la para o escopo sumir.
-        return { permitido: false, motivo: "indisponivel", detalhe: "resolvedor de contato ausente" };
+        return {
+          permitido: false,
+          motivo: "indisponivel",
+          detalhe: "resolvedor de contato ausente",
+        };
       }
 
       let r: ResolucaoDeContato;

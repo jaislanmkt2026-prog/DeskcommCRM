@@ -196,6 +196,8 @@ export const AUDIT_ACTIONS = [
   "platform_admin.user_viewed",
   "platform_admin.platform_admins_listed",
   "mcp.tool_called",
+  "integration.time_chaves.event_received",
+  "integration.squad100.artifact_received",
   "ai.credential_created",
   "ai.credential_deleted",
   "ai.credential_revalidated",
@@ -422,6 +424,7 @@ export const AUDIT_ACTIONS = [
   "pipeline.deleted",
   "system.update_requested",
   "system.update_finished",
+  "system.upstream_check_requested",
   // IA 360 · wave 2 — o retorno agendado deixou de ser exclusividade do motor e
   // virou capacidade configurável. `followup_enrollment.*` é o motor de FLUXOS;
   // estas duas são a PROMESSA avulsa (cron_jobs), que é outra coisa e precisava
@@ -1056,6 +1059,17 @@ export const AUDIT_ACTIONS = [
   "company_people.updated",
   "contacts.person_linked",
   "imports.companies_people",
+
+  // ── CV CRM — ingestão oficial (cron) ──────────────────────────────────────
+  // Rodada do cron que ingeriu registros do CV CRM: sucesso, falha ou parcial.
+  // Metadata leva batch_id, organization_id, total/valid/invalid/processed/stale_count.
+  "cv_crm.ingestion_completed",
+  "cv_crm.ingestion_failed",
+  "cv_crm.ingestion_partial",
+  // Leitura operacional dos logs de ingestão (diagnóstico/admin)
+  "cv_crm.logs_listed",
+  // Visualização de métricas agregadas CV CRM
+  "cv_crm.metrics_viewed",
   // A chave de Mapas da organização (0504, Agente de IA › Provedores): gravada ou
   // trocada, e removida. O metadata diz O QUE mudou — nunca a chave.
   "ai.maps_credential_saved",

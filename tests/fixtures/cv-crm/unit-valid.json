@@ -1,0 +1,13 @@
+{
+ "entity_type": "unit",
+ "external_id": "CV-UNIT-101",
+ "payload": {
+ "development_id": "CV-DEV-001",
+ "numero": "101",
+ "andar": 1,
+ "area_m2": 75.5,
+ "quartos": 2,
+ "banheiros": 2,
+ "vagas": 1
+ }
+}

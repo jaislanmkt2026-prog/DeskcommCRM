@@ -235,4 +235,3 @@ describe("reatividade — o roteiro de atendimento ('coletando', PR 2 do #1130)"
     expect(espiao.patches).toEqual([]);
   });
 });
-

@@ -186,7 +186,7 @@ describe("fiação — a espera humana é paga UMA vez por turno", () => {
     expect(doSendMessage).toBeGreaterThan(-1);
     const i = FONTE_INBOUND.indexOf("send: (finalBody: string) =>", doSendMessage);
     expect(i).toBeGreaterThan(-1);
-    const janela = FONTE_INBOUND.slice(i, i + 2400);
+    const janela = FONTE_INBOUND.slice(i, i + 3200);
     // Os dois convivem: o jitter é throttle anti-ban entre mensagens físicas, o
     // atraso humano é a pausa do turno. Perder o primeiro é afrouxar o anti-ban.
     // Desde a 0499 o jitter LÊ os knobs da conexão (throttleMs + jitterMaxMs,

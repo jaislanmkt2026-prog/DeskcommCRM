@@ -1,4 +1,6 @@
-import { assertAgentOperationPg, type AgentOperationContext } from '@/lib/ai/agents/operation';
+import { assertAgentOperationPg } from '@/lib/ai/agents/operation';
+import type { AgentOperationContext } from '@/lib/ai/agents/operation';
+import type { ToolReceipt } from '../../guardrails/lia-outbound-guard';
 import { assertApprovedReplyPg, type ApprovedReplyContext } from '@/lib/ai/replies/delivery';
 import { assertMeetingDeliveryPg, type MeetingDeliveryContext } from '@/lib/agenda/meet-delivery';
 import type { JobClaim } from '../../queue/claim';
@@ -47,6 +49,7 @@ export class SendToolError extends Error {
 
 export interface SendMessageInput {
   agentOperation?: AgentOperationContext;
+  toolReceipts?: ToolReceipt[];
   jobClaim?: JobClaim;
   tenantId: string;
   leadId: string | null;
@@ -201,6 +204,7 @@ export async function sendTurnMessage(
           meetingDelivery,
           approvedReply,
           agentOperation: input.agentOperation,
+          toolReceipts: input.toolReceipts,
           internalMessageId: messageId,
         },
         corpoDoEnvio(input, idempotencyKey),

@@ -59,6 +59,7 @@ let runSelectError: { message: string } | null;
 let smtpRow: Record<string, unknown> | null;
 /** Erro que a leitura (`maybeSingle`) de `platform_smtp_settings` deve devolver. */
 let smtpSelectError: { message: string } | null;
+let crivoState: { crivo_environment: string; kill_switch: boolean; change_fingerprint: string };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -72,6 +73,8 @@ beforeEach(() => {
   runSelectError = null;
   smtpRow = null;
   smtpSelectError = null;
+  vi.stubEnv("CRIVO_ENVIRONMENT", "staging");
+  crivoState = { crivo_environment: "staging", kill_switch: false, change_fingerprint: "a".repeat(64) };
   versionRow = {
     id: 1,
     current_version: "1.0.0",
@@ -88,6 +91,18 @@ beforeEach(() => {
   };
 
   vi.mocked(createAdminClient).mockReturnValue({
+    rpc: async (_fn: string, args: Record<string, unknown>) => {
+      if (insertError) return { data: null, error: insertError };
+      inserted = {
+        from_version: args.p_from_version,
+        to_version: args.p_to_version,
+        status: "dispatched",
+        requested_by: args.p_requested_by,
+        crivo_environment: args.p_environment,
+        change_fingerprint: args.p_fingerprint,
+      };
+      return { data: "44444444-4444-4444-8444-444444444444", error: null };
+    },
     from: (table: string) => {
       // O double espelha o banco: `system_version` é sempre buscado por
       // `.eq("id", 1)`; `system_update_runs` é buscado tanto por
@@ -104,13 +119,17 @@ beforeEach(() => {
             ? versionRow
             : table === "platform_smtp_settings"
               ? smtpRow
-              : runRow,
+              : table === "system_upstream_state"
+                ? crivoState
+                : runRow,
         error:
           table === "system_version"
             ? versionSelectError
             : table === "platform_smtp_settings"
               ? smtpSelectError
-              : runSelectError,
+              : table === "system_upstream_state"
+                ? null
+                : runSelectError,
       });
       return {
         select: () => ({

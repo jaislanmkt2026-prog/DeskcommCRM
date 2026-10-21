@@ -121,7 +121,9 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 # `npm`/`pnpm run`. Toda instalação do mundo reportava o fallback "0.1.0".
 # Declarada AQUI, depois das camadas caras (ver acima).
 ARG APP_VERSION=dev
-ENV APP_VERSION=$APP_VERSION
+ARG APP_REVISION=
+ENV APP_VERSION=$APP_VERSION \
+    APP_REVISION=$APP_REVISION
 # O output standalone NÃO inclui public/ nem .next/static — copiar explicitamente,
 # senão CSS/JS/assets retornam 404 (app "sem estilo").
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./

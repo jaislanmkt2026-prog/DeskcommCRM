@@ -46,63 +46,81 @@ export type DonoDoCampo =
   | "alvo_de_tag"
   /** `lead_id`: quem guarda é `negocioDaEscritaDoTurno`, em `tools.ts`. */
   | "negocio"
+  /** `document_checklist_items.contact_id` (checklist de documentos do imobiliário). */
+  | "item_do_checklist"
+  /** `messages.conversation_id` → `conversations.contact_id`. */
+  | "mensagem"
   /** Não é registro de cliente: funil, etapa, usuário, fluxo. */
   | "configuracao";
 
-export const ESCOPO_DAS_ESCRITAS: Readonly<Record<string, Readonly<Record<string, DonoDoCampo>>>> = {
-  // ---- agenda ----
-  crm_book_appointment: { contact_id: "contato", owner_user_id: "configuracao" },
-  crm_find_and_book_appointment: { contact_id: "contato", owner_user_id: "configuracao" },
-  crm_reschedule_appointment: { appointment_id: "compromisso" },
-  crm_cancel_appointment: { appointment_id: "compromisso" },
-  crm_confirm_appointment: { appointment_id: "compromisso" },
-  crm_set_appointment_outcome: { appointment_id: "compromisso" },
+export const ESCOPO_DAS_ESCRITAS: Readonly<Record<string, Readonly<Record<string, DonoDoCampo>>>> =
+  {
+    // ---- agenda ----
+    crm_book_appointment: { contact_id: "contato", owner_user_id: "configuracao" },
+    crm_find_and_book_appointment: { contact_id: "contato", owner_user_id: "configuracao" },
+    crm_reschedule_appointment: { appointment_id: "compromisso" },
+    crm_cancel_appointment: { appointment_id: "compromisso" },
+    crm_confirm_appointment: { appointment_id: "compromisso" },
+    crm_set_appointment_outcome: { appointment_id: "compromisso" },
 
-  // ---- contato e conversa ----
-  crm_propose_contact_field: { contact_id: "contato" },
-  crm_create_conversation_draft: { conversation_id: "conversa" },
-  crm_assign_conversation: { conversation_id: "conversa", to_user_id: "configuracao" },
-  crm_manage_tags: { target_id: "alvo_de_tag" },
-  crm_send_whatsapp_message: { conversation_id: "conversa" },
-  crm_request_human_handoff: { conversation_id: "conversa", target_user_id: "configuracao" },
-  crm_resume_ai_attendance: { conversation_id: "conversa" },
+    // ---- contato e conversa ----
+    crm_propose_contact_field: { contact_id: "contato" },
+    crm_create_conversation_draft: { conversation_id: "conversa" },
+    crm_assign_conversation: { conversation_id: "conversa", to_user_id: "configuracao" },
+    crm_manage_tags: { target_id: "alvo_de_tag" },
+    crm_send_whatsapp_message: { conversation_id: "conversa" },
+    crm_request_human_handoff: { conversation_id: "conversa", target_user_id: "configuracao" },
+    crm_resume_ai_attendance: { conversation_id: "conversa" },
 
-  // ---- casos humanos ----
-  crm_add_case_note: { case_id: "chamado" },
-  crm_close_human_case: { case_id: "chamado" },
+    // ---- casos humanos ----
+    crm_add_case_note: { case_id: "chamado" },
+    crm_close_human_case: { case_id: "chamado" },
 
-  // ---- negócio ----
-  crm_create_lead: {
-    contact_id: "contato",
-    pipeline_id: "configuracao",
-    stage_id: "configuracao",
-    owner_user_id: "configuracao",
-    owner_agent_id: "configuracao",
-  },
-  crm_update_lead: {
-    lead_id: "negocio",
-    contact_id: "contato",
-    owner_user_id: "configuracao",
-    owner_agent_id: "configuracao",
-  },
-  crm_move_lead_stage: { lead_id: "negocio", to_stage_id: "configuracao" },
-  crm_retomar_lead: { lead_id: "negocio", stage_id: "configuracao" },
-  crm_close_demand: { lead_id: "negocio" },
-  crm_propose_reactivation: { lead_id: "negocio" },
-  crm_draft_proposal: { lead_id: "negocio", conversation_id: "conversa" },
+    // ---- negócio ----
+    crm_create_lead: {
+      contact_id: "contato",
+      pipeline_id: "configuracao",
+      stage_id: "configuracao",
+      owner_user_id: "configuracao",
+      owner_agent_id: "configuracao",
+    },
+    crm_update_lead: {
+      lead_id: "negocio",
+      contact_id: "contato",
+      owner_user_id: "configuracao",
+      owner_agent_id: "configuracao",
+    },
+    crm_move_lead_stage: { lead_id: "negocio", to_stage_id: "configuracao" },
+    crm_retomar_lead: { lead_id: "negocio", stage_id: "configuracao" },
+    crm_close_demand: { lead_id: "negocio" },
+    crm_propose_reactivation: { lead_id: "negocio" },
+    crm_draft_proposal: { lead_id: "negocio", conversation_id: "conversa" },
 
-  // ---- retorno ----
-  crm_schedule_followup: { lead_id: "negocio", contact_id: "contato" },
-  crm_cancel_followup: { followup_id: "retorno" },
-  crm_enroll_followup_flow: { contact_id: "contato", flow_id: "configuracao" },
+    // ---- retorno ----
+    crm_schedule_followup: { lead_id: "negocio", contact_id: "contato" },
+    crm_cancel_followup: { followup_id: "retorno" },
+    crm_enroll_followup_flow: { contact_id: "contato", flow_id: "configuracao" },
 
-  // ---- sem registro de cliente ----
-  crm_save_org_memory: {},
-};
+    // ---- imobiliário ----
+    crm_save_lead_preferences: { lead_id: "negocio" },
+    crm_save_attendance_summary: { lead_id: "negocio" },
+    crm_request_handoff_imobiliario: {
+      conversation_id: "conversa",
+      target_user_id: "configuracao",
+    },
+    crm_update_document_checklist_item: { item_id: "item_do_checklist", message_id: "mensagem" },
+
+    // ---- sem registro de cliente ----
+    crm_save_org_memory: {},
+  };
 
 export type VereditoDaEscrita =
   | { permitido: true }
-  | { permitido: false; motivo: "fora_da_conversa" | "indisponivel" | "escrita_sem_escopo_do_turno"; mensagem: string };
+  | {
+      permitido: false;
+      motivo: "fora_da_conversa" | "indisponivel" | "escrita_sem_escopo_do_turno";
+      mensagem: string;
+    };
 
 const FORA_DA_CONVERSA = {
   permitido: false,
@@ -175,6 +193,20 @@ async function campoEhDoContato(
         .maybeSingle();
       if (caso.error) throw new Error(caso.error.message);
       return caso.data !== null;
+    }
+    case "item_do_checklist":
+      return existeDoContato(supabase, "document_checklist_items", organizationId, contato, id);
+    case "mensagem": {
+      const msg = await supabase
+        .from("messages")
+        .select("conversation_id")
+        .eq("organization_id", organizationId)
+        .eq("id", id)
+        .maybeSingle();
+      if (msg.error) throw new Error(msg.error.message);
+      const conversa = (msg.data as { conversation_id?: string } | null)?.conversation_id;
+      if (!conversa) return false;
+      return existeDoContato(supabase, "conversations", organizationId, contato, conversa);
     }
     case "alvo_de_tag":
       switch (args.target_kind) {

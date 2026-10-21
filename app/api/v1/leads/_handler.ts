@@ -43,6 +43,7 @@ import {
 } from "@/lib/leads/motivo-da-perda";
 import { motivosDaCategoria } from "@/lib/leads/motivos-de-perda-do-funil";
 import type { CreateLeadInput, UpdateLeadInput } from "@/lib/schemas";
+import { qualificacaoImobiliariaSchema } from "@/lib/schemas/imobiliario";
 import { ehCorrecaoDeMovimentoDaIa } from "@/lib/leads/correcao-humana";
 
 type SB = SupabaseClient;
@@ -70,7 +71,10 @@ async function ownerPatchOrThrow(
       "validation_failed",
       undefined,
       ctx.requestId,
-      traduzir("Um lead tem um dono: informe owner_user_id OU owner_agent_id.", ctx.idioma ?? "pt-BR"),
+      traduzir(
+        "Um lead tem um dono: informe owner_user_id OU owner_agent_id.",
+        ctx.idioma ?? "pt-BR",
+      ),
     );
   }
   if (!result.patch) return null;
@@ -689,8 +693,7 @@ export async function createLeadHandler(
       value_cents: input.value_cents ?? null,
       currency,
       ...ownerPatch,
-      assigned_at:
-        ownerPatch.owner_kind === null ? null : new Date().toISOString(),
+      assigned_at: ownerPatch.owner_kind === null ? null : new Date().toISOString(),
       expected_close_date: input.expected_close_date ?? null,
       tags: input.tags ?? [],
       source: input.source,
@@ -890,6 +893,19 @@ export async function updateLeadHandler(
     patch.expected_close_date = input.expected_close_date;
   }
   if (input.tags !== undefined) patch.tags = input.tags;
+  // Validação Zod de qualificacao_imobiliaria no patch (regra do dono): recusa antes de gravar.
+  if (input.custom_fields !== undefined) {
+    const qualificacao = (input.custom_fields as Record<string, unknown>).qualificacao_imobiliaria;
+    if (qualificacao) {
+      try {
+        qualificacaoImobiliariaSchema.partial().parse(qualificacao);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : "Qualificação imobiliária inválida";
+        throw new ApiError(400, "validation_error", undefined, ctx.requestId, message);
+      }
+    }
+  }
+
   // ⛔ `custom_fields` NÃO ENTRA NO `patch`, e a ausência é o conserto.
   //
   // Isto era `patch.custom_fields = { ...prev, ...input.custom_fields }`, com
@@ -1315,7 +1331,9 @@ export async function moveLeadHandler(
     throw new ApiError(422, veredito.codigo, undefined, ctx.requestId, veredito.mensagem);
   }
 
-  const serviceOrigin = ctx.serviceOrigin ?? await observeServiceOrigin(createAdminClient(), ctx.organization_id, lead.contact_id);
+  const serviceOrigin =
+    ctx.serviceOrigin ??
+    (await observeServiceOrigin(createAdminClient(), ctx.organization_id, lead.contact_id));
   const nowIso = new Date().toISOString();
   await guardServiceEffect();
   const { data: updated, error: updErr } = await supabase
@@ -1423,12 +1441,14 @@ export async function moveLeadHandler(
         .order("performed_at", { ascending: false })
         .limit(5);
 
-      const anteriores = ((historico ?? []) as Array<{
-        actor_kind: string | null;
-        actor_agent_id: string | null;
-        payload: { from_stage_id?: string; to_stage_id?: string } | null;
-        performed_at: string;
-      }>)
+      const anteriores = (
+        (historico ?? []) as Array<{
+          actor_kind: string | null;
+          actor_agent_id: string | null;
+          payload: { from_stage_id?: string; to_stage_id?: string } | null;
+          performed_at: string;
+        }>
+      )
         // A atividade que ACABOU de ser emitida está aqui: descartá-la é o que
         // impede o movimento de se comparar consigo mesmo e virar "correção".
         .filter((h) => h.performed_at < new Date(Date.now() - 500).toISOString())

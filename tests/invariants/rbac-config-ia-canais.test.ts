@@ -140,21 +140,26 @@ describe("0150 — o segredo cifrado some da superfície do browser", () => {
   });
 
   it("nem o iv nem o tag saem junto (o trio é o que decifra)", () => {
-    expect(podeLer(GOV_ADMIN, `select api_key_iv from public.ai_provider_credentials;`)).toBe(false);
+    expect(podeLer(GOV_ADMIN, `select api_key_iv from public.ai_provider_credentials;`)).toBe(
+      false,
+    );
     expect(podeLer(GOV_ADMIN, `select api_key_tag from public.ai_provider_credentials;`)).toBe(
       false,
     );
   });
 
   it("CONTROLE POSITIVO: a view segura continua legível (é o que a tela consome)", () => {
-    expect(
-      podeLer(GOV_ADMIN, `select count(*) from public.ai_provider_credentials_safe;`),
-    ).toBe(true);
+    expect(podeLer(GOV_ADMIN, `select count(*) from public.ai_provider_credentials_safe;`)).toBe(
+      true,
+    );
   });
 
   it("CONTROLE POSITIVO: as colunas não-sensíveis continuam legíveis na tabela base", () => {
     expect(
-      podeLer(GOV_ADMIN, `select provider, label, api_key_last4 from public.ai_provider_credentials;`),
+      podeLer(
+        GOV_ADMIN,
+        `select provider, label, api_key_last4 from public.ai_provider_credentials;`,
+      ),
     ).toBe(true);
   });
 
@@ -196,18 +201,34 @@ const DIVIDA_RBAC_CONHECIDA = new Set([
   // segundo eixo (so agent+ resolve numero, so manager+ configura roteamento)
   // ainda nao tem par de casos provando papel de baixo barrado. Divida
   // herdada de antes desta varredura existir, nao introduzida agora.
-  "phone_numbers", "playbook_pointers", "playbook_versions", "promise_table_pointers",
-  "promise_table_versions", "reentry_knob_pointers", "reentry_knob_versions",
-  "reentry_template_pointers", "reentry_template_versions", "send_ledger",
-  "skill_activations", "skill_pointers", "skill_versions", "storage_redaction_queue",
+  "phone_numbers",
+  "playbook_pointers",
+  "playbook_versions",
+  "promise_table_pointers",
+  "promise_table_versions",
+  "reentry_knob_pointers",
+  "reentry_knob_versions",
+  "reentry_template_pointers",
+  "reentry_template_versions",
+  "send_ledger",
+  "skill_activations",
+  "skill_pointers",
+  "skill_versions",
+  "storage_redaction_queue",
   "user_recovery_codes",
 ]);
 
 describe("0150 — a dívida de RBAC não cresce", () => {
   it("as tabelas já corrigidas têm policy de escrita com fn_role_at_least", () => {
     const corrigidas = [
-      "channel_sessions", "ai_agents", "ai_agent_versions", "ai_budgets",
-      "ai_routers", "ai_router_members", "ai_purpose_bindings", "ai_provider_credentials",
+      "channel_sessions",
+      "ai_agents",
+      "ai_agent_versions",
+      "ai_budgets",
+      "ai_routers",
+      "ai_router_members",
+      "ai_purpose_bindings",
+      "ai_provider_credentials",
       // As quatro do acervo entraram na 0181, pelo mesmo motivo e no mesmo
       // formato: um `viewer` DELETAVA `ai_chunks` da própria organização
       // falando direto com o PostgREST, com o JWT dele.

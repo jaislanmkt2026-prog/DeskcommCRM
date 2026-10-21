@@ -66,4 +66,3 @@ describe("o roteiro encerra com humano, no opt-out e no prazo (0397)", () => {
     expect(noBaseline).toBeLessThan(varredura);
   });
 });
-

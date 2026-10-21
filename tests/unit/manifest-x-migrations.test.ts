@@ -94,6 +94,14 @@ const DIVERGENCIAS_CONHECIDAS = {
  */
 const TIMESTAMPS_REPETIDOS_CONHECIDOS: readonly string[] = [];
 
+/**
+ * Colisões de NNNN já materializadas antes da Missão 6.1. O timestamp continua
+ * único (identidade do Supabase), e a missão exige preservar estes nomes
+ * completos. A exceção é pelo CONJUNTO EXATO: arquivo novo com o mesmo NNNN
+ * continua reprovando.
+ */
+const NUMEROS_REPETIDOS_MATERIALIZADOS: Readonly<Record<string, readonly string[]>> = {};
+
 /** Só os arquivos que carregam timestamp no nome — as legadas não têm. */
 function arquivosComTimestamp(): { timestamp: string; arquivo: string }[] {
   return readdirSync(DIR)
@@ -226,6 +234,11 @@ describe("MANIFEST × arquivos de migration", () => {
     }
     const duplicados = [...porNumero.entries()]
       .filter(([, fs]) => fs.length > 1)
+      .filter(([num, fs]) => {
+        const conhecido = NUMEROS_REPETIDOS_MATERIALIZADOS[num];
+        if (!conhecido) return true;
+        return [...fs].sort().join("|") !== [...conhecido].sort().join("|");
+      })
       .map(([num, fs]) => `${num}: ${fs.join(", ")}`);
     // A exceção da 0068 saiu daqui em 2026-08-06: a colisão foi CONSERTADA
     // (`0068_ai_pricing_backfill` → `0110_...`), não perdoada. Sem exceção nenhuma

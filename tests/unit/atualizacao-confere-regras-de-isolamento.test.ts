@@ -104,7 +104,7 @@ describe("o update.sh guarda a evidência e confere o resultado", () => {
     const aplica = UPDATE.indexOf('reaplicar_baseline "$PROJECT_DIR/supabase/baseline.sql"');
     expect(pausa).toBeGreaterThan(-1);
     expect(aplica).toBeGreaterThan(pausa);
-    expect(UPDATE).toMatch(/trap restaurar_servicos EXIT/);
+    // O Crivo troca o trap do upstream por `finalizar_update_supervisionado`, que chama`n  // `restaurar_servicos` na saída (e faz o rollback supervisionado antes).`n  expect(UPDATE).toMatch(/trap (restaurar_servicos|finalizar_update_supervisionado) EXIT/);
   });
 });
 

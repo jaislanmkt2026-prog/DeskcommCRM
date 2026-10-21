@@ -29,11 +29,7 @@ import {
 import { crmGetPipelineForecast, crmListPipelines } from "./pipelines";
 import { crmSendWhatsappMessage } from "./messages";
 import { crmStartConversationAndSend } from "./start-conversation";
-import {
-  crmAssignConversation,
-  crmManageTags,
-  crmGetQueueStatus,
-} from "./governance";
+import { crmAssignConversation, crmManageTags, crmGetQueueStatus } from "./governance";
 import {
   crmListAvailableAttendants,
   crmListHumanCases,
@@ -83,6 +79,18 @@ import {
   crmSetAppointmentOutcome,
 } from "./agendamento";
 import {
+  crmSaveLeadPreferences,
+  crmListDevelopments,
+  crmGetDevelopment,
+  crmListAvailableUnits,
+  crmGetUnit,
+  crmGetUnitPrice,
+  crmSaveAttendanceSummary,
+  crmRequestHandoffImobiliario,
+  crmGetDocumentChecklist,
+  crmUpdateDocumentChecklistItem,
+} from "./imobiliario";
+import {
   crmScheduleFollowup,
   crmEnrollFollowupFlow,
   crmCancelFollowup,
@@ -92,6 +100,7 @@ import {
   crmProposeReactivation,
 } from "./retencao";
 import { crmDraftProposal, crmPrepararProposta } from "./propostas";
+import { crmCreateCampaign, crmListCampaigns, crmRunCampaignAction } from "./campanhas";
 
 // Cast via `unknown` porque McpToolDefinition<TInput> nao e covariante
 // em TInput (handler usa TInput em posicao contravariante). Coletar
@@ -142,7 +151,10 @@ export const allTools: ReadonlyArray<McpToolDefinition> = [
   crmListAvailableAttendants,
   crmListHumanCases,
   crmGetHumanCase,
+  crmListCampaigns,
   // write
+  crmCreateCampaign,
+  crmRunCampaignAction,
   // A que consulta E marca numa chamada só vem primeiro: quando o cliente já deu
   // dia e hora, é o caminho curto, e é o que evita o turno morrer no meio (#831).
   crmFindAndBookAppointment,
@@ -175,6 +187,17 @@ export const allTools: ReadonlyArray<McpToolDefinition> = [
   crmAddCaseNote,
   crmCloseHumanCase,
   crmResumeAiAttendance,
+  // imobiliario
+  crmSaveLeadPreferences,
+  crmListDevelopments,
+  crmGetDevelopment,
+  crmListAvailableUnits,
+  crmGetUnit,
+  crmGetUnitPrice,
+  crmSaveAttendanceSummary,
+  crmRequestHandoffImobiliario,
+  crmGetDocumentChecklist,
+  crmUpdateDocumentChecklistItem,
   crmDraftProposal,
   // handoff (special)
   crmRequestHumanHandoff,

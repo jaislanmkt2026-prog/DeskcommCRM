@@ -15,11 +15,17 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { SeletorDeIdioma } from "@/components/shell/SeletorDeIdioma";
 import { useT } from "@/hooks/i18n/useT";
 import Link from "next/link";
-import { SignOut, ShieldCheck } from "@/lib/ui/icons";
+import { SignOut, ShieldCheck, ArrowCircleUp } from "@/lib/ui/icons";
 
 function initials(name: string | null, email: string): string {
   if (name && name.trim()) {
-    return name.trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
+    return name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((p) => p[0])
+      .join("")
+      .toUpperCase();
   }
   return email.slice(0, 2).toUpperCase();
 }
@@ -36,7 +42,12 @@ export function UserMenu() {
       <ThemeToggle />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="rounded-full" aria-label={t("Menu do usuário")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="rounded-full"
+            aria-label={t("Menu do usuário")}
+          >
             <Avatar className="h-8 w-8">
               {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
               <AvatarFallback>{initials(user.full_name, user.email)}</AvatarFallback>
@@ -74,6 +85,12 @@ export function UserMenu() {
           {user.is_platform_admin && (
             <>
               <DropdownMenuItem asChild>
+                <Link href="/app/settings/atualizacao" data-testid="porta-atualizacoes">
+                  <ArrowCircleUp size={16} className="mr-2" aria-hidden />
+                  <span>{t("Atualizações")}</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
                 <Link href="/admin" data-testid="porta-modo-administrador">
                   <ShieldCheck size={16} className="mr-2" aria-hidden />
                   <span className="flex flex-col">
@@ -87,7 +104,14 @@ export function UserMenu() {
               <DropdownMenuSeparator />
             </>
           )}
-          <DropdownMenuItem disabled={isPending} onClick={() => startTransition(async () => { await signOut(); })}>
+          <DropdownMenuItem
+            disabled={isPending}
+            onClick={() =>
+              startTransition(async () => {
+                await signOut();
+              })
+            }
+          >
             <SignOut size={16} className="mr-2" aria-hidden />
             {t("Sair")}
           </DropdownMenuItem>

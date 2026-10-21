@@ -5,6 +5,7 @@ import type { MeetingDeliveryContext, MeetingBookingContext } from "@/lib/agenda
 import type { ProactiveContext } from "@/lib/agenda/efeito";
 import type { ServiceOrigin } from "@/lib/atendimento/origem";
 import type { ServiceBoundary } from "@/lib/atendimento/fronteira";
+import type { ToolReceipt } from "@/lib/agent-engine/guardrails/lia-outbound-guard";
 /**
  * Shared types for `app/api/v1/<resource>/_handler.ts` core functions.
  *
@@ -81,6 +82,8 @@ export interface HandlerCtx {
   proactiveContext?: ProactiveContext;
   /** Trusted origin captured by the runtime, never request-body metadata. */
   serviceBoundary?: ServiceBoundary | null;
+  /** Provas internas de tools executadas neste turno; nunca vêm do request público. */
+  toolReceipts?: ToolReceipt[];
   /** Origem de evento derivado; não é campo de input público. */
   serviceOrigin?: ServiceOrigin;
   /** Chave HTTP validada na borda para replay de uma criação. */

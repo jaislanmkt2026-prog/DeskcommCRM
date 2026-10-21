@@ -56,6 +56,7 @@ const SEM_FILTRO: Record<string, string> = {
   "case-stale-watcher": "só reabre aviso de caso na Central; sem custo nem saída",
   "channel-health": "só pergunta ao transporte se a sessão está de pé; nenhuma mensagem ao cliente",
   "contact-avatars": "baixa a foto de perfil: deliberadamente não gatilhado (spec §4)",
+  "upstream-check": "Crivo: consulta o repositório upstream e grava o estado da INSTALAÇÃO (não é de nenhuma organização); sem custo por org nem saída ao cliente",
   "contact-birthdays": "só emite contact.birthday; o consumidor (automationRulesHandler) é 'pula'",
   "contact-phones": "só consulta o transporte para achar o telefone; nenhuma mensagem ao cliente",
   "contact-proposals-watcher": "só expira propostas de dado vencidas; escrita interna",

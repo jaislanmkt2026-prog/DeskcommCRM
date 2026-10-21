@@ -50114,7 +50114,56 @@ begin
   --     núcleo vence numa colisão de nome.
   v_counts := v_secoes || v_counts;
 
-  -- 8. dense audit row
+  -- 9. document_checklist_items — strip contact + motivo de recusa, preserve checklist_key/status/recebido_em
+update document_checklist_items set
+  contact_id = null,
+  message_id = null,
+  recusado_motivo = null,
+  updated_at = now()
+where organization_id = p_organization_id
+  and contact_id = p_contact_id;
+get diagnostics v_count = row_count;
+v_counts := v_counts || jsonb_build_object('document_checklist_items', v_count);
+
+-- 10. negotiations — strip ambas FKs para contacts, preserve unidade/imovel/estagio/valor
+update negotiations set
+  contact_id = null,
+  responsavel_contact_id = null,
+  updated_at = now()
+where organization_id = p_organization_id
+  and contact_id = p_contact_id;
+get diagnostics v_count = row_count;
+v_counts := v_counts || jsonb_build_object('negotiations', v_count);
+
+-- 11. property_proposals — strip client_id + payment_composition, preserve unit/price_list/status
+update property_proposals set
+  client_id = null,
+  payment_composition = '{}'::jsonb,
+  updated_at = now()
+where organization_id = p_organization_id
+  and client_id = p_contact_id;
+get diagnostics v_count = row_count;
+v_counts := v_counts || jsonb_build_object('property_proposals', v_count);
+
+
+-- lead_notes — notas escritas SOBRE a pessoa (migration 0050).
+--
+-- `headline` é a linha do índice e `body` o corpo sob demanda: ambos são
+-- texto livre que pode conter nome, telefone ou qualquer dado pessoal.
+-- FK direta para contacts (`contact_id not null`), então o vínculo é o titular.
+-- O embedding fica órfão sem a nota; como é derivado do texto apagado, perde
+-- utilidade junto com ele. Zerar em vez de manter vetor sem sentido.
+update lead_notes set
+  headline = '[nota anonimizada]',
+  body = '[corpo anonimizado]',
+  embedding = null,
+  updated_at = now()
+where organization_id = p_organization_id
+  and contact_id = p_contact_id;
+get diagnostics v_count = row_count;
+v_counts := v_counts || jsonb_build_object('lead_notes', v_count);
+
+-- 8. dense audit row
   insert into api_audit_log (organization_id, action, actor_user_id, resource_type, resource_id, metadata, bypassed_rls)
   values (
     p_organization_id,
@@ -55790,6 +55839,2095 @@ create trigger trg_prospeccao_saida_volta_com_a_mensagem
   for each row
   when (new.status = 'failed' and old.status is distinct from 'failed')
   execute function public.fn_prospeccao_saida_volta_com_a_mensagem();
+-- ---- BLOCO DO DONO (preservado na atualização para a v1.80.0): imobiliário, CV CRM, RBAC, LGPD imobiliária ----
+
+-- ====== Seções do dono (JS Imóveis) preservadas na integração com o upstream de 2026-10-01 ======
+-- ---- 0416 crivo interno upstream — estado de instância + histórico ----
+create table if not exists public.system_upstream_state (
+  id smallint primary key default 1 check (id = 1),
+  repository text not null default 'melgarafael/DeskcommCRM',
+  default_branch text not null default '',
+  local_commit text not null default '',
+  last_seen_commit text not null default '',
+  latest_upstream_commit text not null default '',
+  last_seen_tag text not null default '',
+  last_seen_release text not null default '',
+  last_checked_at timestamptz,
+  next_check_at timestamptz,
+  update_available boolean not null default false,
+  commits_behind integer not null default 0 check (commits_behind >= 0),
+  files_changed integer not null default 0 check (files_changed >= 0),
+  risk_level text not null default 'low' check (risk_level in ('low','medium','high','critical')),
+  analysis_status text not null default 'never'
+    check (analysis_status in ('never','no_change','completed','incomplete','failed')),
+  analysis_summary jsonb not null default '{}'::jsonb check (jsonb_typeof(analysis_summary) = 'object'),
+  updated_at timestamptz not null default now()
+);
+comment on table public.system_upstream_state is
+  'Singleton de instância: último estado conhecido do Crivo interno contra o upstream público.';
+insert into public.system_upstream_state (id) values (1) on conflict (id) do nothing;
+
+create table if not exists public.system_upstream_checks (
+  id uuid primary key default gen_random_uuid(),
+  repository text not null default 'melgarafael/DeskcommCRM',
+  default_branch text not null default '',
+  local_commit text not null default '',
+  upstream_commit text not null default '',
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  result text not null default 'started'
+    check (result in ('started','no_change','update_available','failed')),
+  commits_delta integer not null default 0 check (commits_delta >= 0),
+  commits_analyzed integer not null default 0 check (commits_analyzed >= 0),
+  files_delta integer not null default 0 check (files_delta >= 0),
+  files_analyzed integer not null default 0 check (files_analyzed >= 0),
+  risk_level text not null default 'low' check (risk_level in ('low','medium','high','critical')),
+  analysis_status text not null default 'never'
+    check (analysis_status in ('never','no_change','completed','incomplete','failed')),
+  events text[] not null default '{}',
+  summary jsonb not null default '{}'::jsonb check (jsonb_typeof(summary) = 'object'),
+  error text
+);
+comment on table public.system_upstream_checks is
+  'Histórico de verificações read-only do upstream. Retenção aplicada pelo Crivo interno.';
+create index if not exists idx_system_upstream_checks_started
+  on public.system_upstream_checks (started_at desc);
+alter table public.system_upstream_state enable row level security;
+alter table public.system_upstream_checks enable row level security;
+revoke all on table public.system_upstream_state from public, anon, authenticated;
+revoke all on table public.system_upstream_checks from public, anon, authenticated;
+grant select, insert, update, delete on table public.system_upstream_state to service_role;
+grant select, insert, update, delete on table public.system_upstream_checks to service_role;
+notify pgrst, 'reload schema';
+
+-- ---- fundação imobiliária (migration 0433) ----
+create table if not exists public.constructors (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+nome text not null,
+portal text,
+tipo_integracao text check (tipo_integracao in ('api', 'csv', 'manual', 'nenhuma')),
+observacoes text,
+ativo boolean not null default true,
+created_at timestamptz not null default now(),
+updated_at timestamptz not null default now()
+);
+comment on table public.constructors is 'Construtoras parceiras da organização (cadastro, sem integração ativa por default).';
+create index if not exists idx_constructors_org on public.constructors (organization_id);
+create table if not exists public.real_estate_developments (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+constructor_id uuid not null references public.constructors(id) on delete cascade,
+nome text not null,
+localizacao text,
+bairro text,
+cidade text,
+descricao text,
+diferenciais text[],
+fotos text[],
+documentos text[],
+status text not null default 'em_andamento' check (status in ('planejamento', 'em_andamento', 'concluido', 'pausado')),
+created_at timestamptz not null default now(),
+updated_at timestamptz not null default now()
+);
+comment on table public.real_estate_developments is 'Empreendimentos de uma construtora (condomínio, prédio, loteamento).';
+create index if not exists idx_developments_org on public.real_estate_developments (organization_id);
+create index if not exists idx_developments_constructor on public.real_estate_developments (constructor_id);
+create table if not exists public.real_estate_units (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+development_id uuid not null references public.real_estate_developments(id) on delete cascade,
+bloco text,
+numero text not null,
+andar integer,
+metragem numeric,
+quartos integer,
+suites integer,
+vagas integer,
+valor_cents bigint,
+condicoes text,
+status text not null default 'disponivel' check (status in ('disponivel', 'reservado', 'vendido', 'bloqueado')),
+created_at timestamptz not null default now(),
+updated_at timestamptz not null default now(),
+unique (development_id, bloco, numero)
+);
+comment on table public.real_estate_units is 'Unidades individuais de um empreendimento (apartamento, casa, sala).';
+create index if not exists idx_units_org on public.real_estate_units (organization_id);
+create index if not exists idx_units_development on public.real_estate_units (development_id);
+create table if not exists public.real_estate_history (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+unit_id uuid not null references public.real_estate_units(id) on delete cascade,
+campo text not null,
+valor_anterior text,
+valor_novo text,
+fonte text,
+registrado_em timestamptz not null default now()
+);
+comment on table public.real_estate_history is 'Log de mudanças de status/valor de uma unidade (auditoria do funil imobiliário).';
+create index if not exists idx_history_org on public.real_estate_history (organization_id);
+create index if not exists idx_history_unit on public.real_estate_history (unit_id);
+create table if not exists public.owners (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+nome text not null,
+telefone text,
+email text,
+documentos jsonb,
+observacoes text,
+created_at timestamptz not null default now(),
+updated_at timestamptz not null default now()
+);
+comment on table public.owners is 'Proprietários de imóveis captados (pode ser o próprio contact ou alguém externo).';
+create index if not exists idx_owners_org on public.owners (organization_id);
+create table if not exists public.third_party_properties (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+owner_id uuid references public.owners(id) on delete cascade,
+endereco text,
+tipo text,
+caracteristicas text,
+fotos text[],
+valor_desejado_cents bigint,
+status_captacao text not null default 'novo_contato' check (status_captacao in ('novo_contato', 'analise', 'captado', 'divulgado', 'vendido')),
+observacoes text,
+created_at timestamptz not null default now(),
+updated_at timestamptz not null default now()
+);
+comment on table public.third_party_properties is 'Imóveis de terceiros captados pela organização (SOMENTE VENDA, não aluguel).';
+create index if not exists idx_third_party_org on public.third_party_properties (organization_id);
+create index if not exists idx_third_party_owner on public.third_party_properties (owner_id);
+create table if not exists public.documents (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+entity_kind text not null check (entity_kind in ('unit', 'third_party_property', 'negotiation')),
+entity_id uuid not null,
+tipo text not null check (tipo in ('matricula', 'escritura', 'iptu', 'contrato', 'pdf', 'imagem')),
+storage_path text not null,
+observacoes text,
+created_at timestamptz not null default now()
+);
+comment on table public.documents is 'Documentos anexados a entidades imobiliárias (sem validação jurídica automática).';
+create index if not exists idx_documents_org on public.documents (organization_id);
+create index if not exists idx_documents_entity on public.documents (entity_kind, entity_id);
+create table if not exists public.negotiations (
+id uuid primary key default gen_random_uuid(),
+organization_id uuid not null references public.organizations(id) on delete cascade,
+contact_id uuid not null references public.contacts(id) on delete cascade,
+unidade_id uuid references public.real_estate_units(id) on delete set null,
+imovel_terceiros_id uuid references public.third_party_properties(id) on delete set null,
+responsavel_contact_id uuid references public.contacts(id) on delete set null,
+estagio text not null default 'interesse' check (estagio in ('interesse', 'visita', 'proposta', 'negociacao', 'fechado', 'perdido')),
+valor_cents bigint,
+created_at timestamptz not null default now(),
+updated_at timestamptz not null default now()
+);
+comment on table public.negotiations is 'Negociações de venda vinculadas a um contato e a uma unidade (própria ou de terceiro).';
+create index if not exists idx_negotiations_org on public.negotiations (organization_id);
+create index if not exists idx_negotiations_contact on public.negotiations (contact_id);
+create index if not exists idx_negotiations_unit on public.negotiations (unidade_id);
+create index if not exists idx_negotiations_third_party on public.negotiations (imovel_terceiros_id);
+alter table public.constructors enable row level security;
+drop policy if exists "tenant_isolation_constructors_all" on public.constructors;
+-- (policy tenant_isolation_constructors_all não é criada aqui: a 0438 a derruba e recria por operação)
+alter table public.real_estate_developments enable row level security;
+drop policy if exists "tenant_isolation_real_estate_developments_all" on public.real_estate_developments;
+-- (policy tenant_isolation_real_estate_developments_all não é criada aqui: a 0438 a derruba e recria por operação)
+alter table public.real_estate_units enable row level security;
+drop policy if exists "tenant_isolation_real_estate_units_all" on public.real_estate_units;
+-- (policy tenant_isolation_real_estate_units_all não é criada aqui: a 0438 a derruba e recria por operação)
+alter table public.real_estate_history enable row level security;
+drop policy if exists "tenant_isolation_real_estate_history_all" on public.real_estate_history;
+-- (policy tenant_isolation_real_estate_history_all não é criada aqui: a 0438 a derruba e recria por operação)
+alter table public.third_party_properties enable row level security;
+drop policy if exists "tenant_isolation_third_party_properties_all" on public.third_party_properties;
+-- (policy tenant_isolation_third_party_properties_all não é criada aqui: a 0438 a derruba e recria por operação)
+alter table public.owners enable row level security;
+drop policy if exists "tenant_isolation_owners_all" on public.owners;
+-- (policy tenant_isolation_owners_all não é criada aqui: a 0438 a derruba e recria por operação)
+alter table public.documents enable row level security;
+drop policy if exists "tenant_isolation_documents_all" on public.documents;
+-- (policy tenant_isolation_documents_all não é criada aqui: a 0438 a derruba e recria por operação)
+alter table public.negotiations enable row level security;
+drop policy if exists "tenant_isolation_negotiations_all" on public.negotiations;
+-- (policy tenant_isolation_negotiations_all não é criada aqui: a 0438 a derruba e recria por operação)
+do $seed_constructors$
+begin
+insert into public.constructors (organization_id, nome, tipo_integracao, ativo)
+select
+o.id,
+c.nome,
+'nenhuma',
+true
+from public.organizations o
+cross join (
+values
+('Engenharq'),
+('Telesil'),
+('Rocha'),
+('MRV'),
+('Solidez')
+) c(nome)
+where not exists (
+select 1 from public.constructors existing
+where existing.organization_id = o.id and existing.nome = c.nome
+);
+end
+$seed_constructors$;
+alter table public.contacts
+add column if not exists interesse_imobiliario text,
+add column if not exists empreendimento_interesse text,
+add column if not exists imoveis_apresentados jsonb not null default '[]'::jsonb;
+comment on column public.contacts.interesse_imobiliario is 'Flag de interesse do contato em produto imobiliário (ex.: "compra", "investimento", "financiamento").';
+comment on column public.contacts.empreendimento_interesse is 'Nome ou ID do empreendimento de interesse do contato.';
+comment on column public.contacts.imoveis_apresentados is 'Lista de unidades/imóveis já apresentados ao contato (histórico de abordagem).';
+notify pgrst, 'reload schema';
+
+
+-- ---- 0383 property proposals/reservations — schema futuro materializado, feature desativada ----
+-- Migration: 20260926191100_0434_property_proposals_reservations
+-- Created: 2026-09-22T21:58:20Z
+-- Purpose: Criar tabelas property_proposals e property_reservations para fechar ciclo de negociação imobiliária
+-- Status: CORREÇÃO MISSÃO 8G — RLS corrigido, updated_at adicionado, FK price_list_id removida (aplicação futura via 0436_price_lists)
+-- NOTE: Esta migration NÃO cria FK para real_estate_price_lists porque essa tabela é criada
+--       posteriormente em 20260923010000_0436_price_lists.sql. A FK será adicionada lá de forma idempotente.
+
+BEGIN;
+
+-- ============================================================================
+-- 1. Tabela property_proposals
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.property_proposals (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL,
+    client_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    price_list_id uuid, -- FK adicionada posteriormente por 0436_price_lists
+    payment_composition jsonb NOT NULL,
+    status text NOT NULL DEFAULT 'draft',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT property_proposals_pkey PRIMARY KEY (id),
+    CONSTRAINT property_proposals_status_check CHECK (status IN ('draft','sent','accepted','rejected','expired')),
+    CONSTRAINT property_proposals_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.contacts(id) ON DELETE CASCADE,
+    CONSTRAINT property_proposals_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.real_estate_units(id) ON DELETE CASCADE,
+    CONSTRAINT property_proposals_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_proposals_org ON public.property_proposals(organization_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_unit ON public.property_proposals(unit_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_client ON public.property_proposals(client_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_status ON public.property_proposals(status);
+
+-- Trigger updated_at
+DROP TRIGGER IF EXISTS trg_property_proposals_updated_at ON public.property_proposals;
+CREATE TRIGGER trg_property_proposals_updated_at
+    BEFORE UPDATE ON public.property_proposals
+    FOR EACH ROW
+    EXECUTE FUNCTION public.fn_set_updated_at();
+
+-- RLS: tenant isolation estrito (sem policies permissivas amplas tipo USING(true))
+ALTER TABLE public.property_proposals ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "tenant_isolation_property_proposals_all" ON public.property_proposals;
+-- (policy tenant_isolation_property_proposals_all não é criada aqui: a 0438 a derruba e recria por operação)
+
+-- ============================================================================
+-- 2. Tabela property_reservations
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.property_reservations (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL,
+    proposal_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    signal_amount_cents bigint NOT NULL,
+    expires_at timestamptz NOT NULL,
+    status text NOT NULL DEFAULT 'active',
+    documents jsonb DEFAULT '[]'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT property_reservations_pkey PRIMARY KEY (id),
+    CONSTRAINT property_reservations_signal_amount_check CHECK (signal_amount_cents >= 0),
+    CONSTRAINT property_reservations_status_check CHECK (status IN ('active','cancelled','expired','converted')),
+    CONSTRAINT property_reservations_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES public.property_proposals(id) ON DELETE CASCADE,
+    CONSTRAINT property_reservations_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.real_estate_units(id) ON DELETE CASCADE,
+    CONSTRAINT property_reservations_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reservations_org ON public.property_reservations(organization_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_unit ON public.property_reservations(unit_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_proposal ON public.property_reservations(proposal_id);
+
+-- Constraint UNIQUE parcial: uma reserva ativa por unidade
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_one_active_per_unit
+    ON public.property_reservations(unit_id)
+    WHERE status = 'active';
+
+-- Trigger updated_at (coluna agora declarada explicitamente acima)
+DROP TRIGGER IF EXISTS trg_property_reservations_updated_at ON public.property_reservations;
+CREATE TRIGGER trg_property_reservations_updated_at
+    BEFORE UPDATE ON public.property_reservations
+    FOR EACH ROW
+    EXECUTE FUNCTION public.fn_set_updated_at();
+
+-- RLS: tenant isolation estrito
+ALTER TABLE public.property_reservations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "tenant_isolation_property_reservations_all" ON public.property_reservations;
+-- (policy tenant_isolation_property_reservations_all não é criada aqui: a 0438 a derruba e recria por operação)
+
+COMMIT;
+
+
+-- ---- 0384 property proposals/reservations history — schema futuro materializado, feature desativada ----
+-- Migration: 20260926191200_0435_property_proposals_reservations_history
+-- Created: 2026-09-22T22:00:00Z
+-- Purpose: Criar tabelas de histórico para property_proposals e property_reservations
+-- Status: CORREÇÃO MISSÃO 8G — Sintaxe PG17 corrigida, FK removida para preservar histórico após DELETE pai,
+--         RLS direto por organization_id (sem subquery), trigger copia org do NEW/OLD
+-- Rollback: DROP TABLE IF EXISTS public.property_reservations_history CASCADE; DROP TABLE IF EXISTS public.property_proposals_history CASCADE; DROP FUNCTION IF EXISTS public.fn_track_proposal_reservation_history CASCADE;
+
+BEGIN;
+
+-- ============================================================================
+-- 1. Tabela property_proposals_history
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.property_proposals_history (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  parent_id uuid NOT NULL,
+  organization_id uuid NOT NULL,
+  changed_by uuid,
+  changed_at timestamptz NOT NULL DEFAULT now(),
+  old_values jsonb,
+  new_values jsonb,
+  operation text NOT NULL,
+  CONSTRAINT property_proposals_history_pkey PRIMARY KEY (id),
+  CONSTRAINT property_proposals_history_operation_check CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+  -- SEM FK para parent_id: histórico deve sobreviver ao DELETE do pai
+  CONSTRAINT property_proposals_history_changed_by_fkey FOREIGN KEY (changed_by) REFERENCES auth.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_proposals_history_parent ON public.property_proposals_history(parent_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_history_changed_at ON public.property_proposals_history(changed_at);
+CREATE INDEX IF NOT EXISTS idx_proposals_history_org ON public.property_proposals_history(organization_id);
+
+-- RLS: tenant isolation direto por organization_id (sem subquery em tabela pai)
+ALTER TABLE public.property_proposals_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "tenant_isolation_proposals_history_all" ON public.property_proposals_history;
+-- (policy tenant_isolation_proposals_history_all não é criada aqui: a 0438 a derruba e recria por operação)
+
+-- ============================================================================
+-- 2. Tabela property_reservations_history
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.property_reservations_history (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  parent_id uuid NOT NULL,
+  organization_id uuid NOT NULL,
+  changed_by uuid,
+  changed_at timestamptz NOT NULL DEFAULT now(),
+  old_values jsonb,
+  new_values jsonb,
+  operation text NOT NULL,
+  CONSTRAINT property_reservations_history_pkey PRIMARY KEY (id),
+  CONSTRAINT property_reservations_history_operation_check CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+  -- SEM FK para parent_id: histórico deve sobreviver ao DELETE do pai
+  CONSTRAINT property_reservations_history_changed_by_fkey FOREIGN KEY (changed_by) REFERENCES auth.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reservations_history_parent ON public.property_reservations_history(parent_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_history_changed_at ON public.property_reservations_history(changed_at);
+CREATE INDEX IF NOT EXISTS idx_reservations_history_org ON public.property_reservations_history(organization_id);
+
+-- RLS: tenant isolation direto por organization_id
+ALTER TABLE public.property_reservations_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "tenant_isolation_reservations_history_all" ON public.property_reservations_history;
+-- (policy tenant_isolation_reservations_history_all não é criada aqui: a 0438 a derruba e recria por operação)
+
+-- ============================================================================
+-- 3. Função de tracking de histórico
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.fn_track_proposal_reservation_history()
+RETURNS trigger AS $$
+DECLARE
+  v_old_values jsonb;
+  v_new_values jsonb;
+  v_operation text;
+  v_history_table text;
+  v_org_id uuid;
+  v_parent_id uuid;
+BEGIN
+  -- Determina operação e extrai organization_id do registro afetado
+  IF TG_OP = 'INSERT' THEN
+    v_operation := 'INSERT';
+    v_old_values := NULL;
+    v_new_values := to_jsonb(NEW);
+    v_org_id := NEW.organization_id;
+    v_parent_id := NEW.id;
+    v_history_table := TG_ARGV[0];
+  ELSIF TG_OP = 'UPDATE' THEN
+    v_operation := 'UPDATE';
+    v_old_values := to_jsonb(OLD);
+    v_new_values := to_jsonb(NEW);
+    v_org_id := NEW.organization_id;
+    v_parent_id := NEW.id;
+    v_history_table := TG_ARGV[0];
+  ELSIF TG_OP = 'DELETE' THEN
+    v_operation := 'DELETE';
+    v_old_values := to_jsonb(OLD);
+    v_new_values := NULL;
+    v_org_id := OLD.organization_id;
+    v_parent_id := OLD.id;
+    v_history_table := TG_ARGV[0];
+  END IF;
+
+  -- Insere na tabela de histórico apropriada COM organization_id explícito
+  IF v_history_table = 'property_proposals_history' THEN
+    INSERT INTO public.property_proposals_history (parent_id, organization_id, changed_by, changed_at, old_values, new_values, operation)
+    VALUES (v_parent_id, v_org_id, auth.uid(), now(), v_old_values, v_new_values, v_operation);
+  ELSIF v_history_table = 'property_reservations_history' THEN
+    INSERT INTO public.property_reservations_history (parent_id, organization_id, changed_by, changed_at, old_values, new_values, operation)
+    VALUES (v_parent_id, v_org_id, auth.uid(), now(), v_old_values, v_new_values, v_operation);
+  END IF;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- 4. Triggers em property_proposals (PG17: sem IF NOT EXISTS em CREATE TRIGGER)
+-- ============================================================================
+DROP TRIGGER IF EXISTS trg_property_proposals_history_insert ON public.property_proposals;
+CREATE TRIGGER trg_property_proposals_history_insert
+  AFTER INSERT ON public.property_proposals
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fn_track_proposal_reservation_history('property_proposals_history');
+
+DROP TRIGGER IF EXISTS trg_property_proposals_history_update ON public.property_proposals;
+CREATE TRIGGER trg_property_proposals_history_update
+  AFTER UPDATE ON public.property_proposals
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fn_track_proposal_reservation_history('property_proposals_history');
+
+DROP TRIGGER IF EXISTS trg_property_proposals_history_delete ON public.property_proposals;
+CREATE TRIGGER trg_property_proposals_history_delete
+  AFTER DELETE ON public.property_proposals
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fn_track_proposal_reservation_history('property_proposals_history');
+
+-- ============================================================================
+-- 5. Triggers em property_reservations
+-- ============================================================================
+DROP TRIGGER IF EXISTS trg_property_reservations_history_insert ON public.property_reservations;
+CREATE TRIGGER trg_property_reservations_history_insert
+  AFTER INSERT ON public.property_reservations
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fn_track_proposal_reservation_history('property_reservations_history');
+
+DROP TRIGGER IF EXISTS trg_property_reservations_history_update ON public.property_reservations;
+CREATE TRIGGER trg_property_reservations_history_update
+  AFTER UPDATE ON public.property_reservations
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fn_track_proposal_reservation_history('property_reservations_history');
+
+DROP TRIGGER IF EXISTS trg_property_reservations_history_delete ON public.property_reservations;
+CREATE TRIGGER trg_property_reservations_history_delete
+  AFTER DELETE ON public.property_reservations
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fn_track_proposal_reservation_history('property_reservations_history');
+
+COMMIT;
+
+
+-- ---- 0436 tabelas de preço imobiliário — schema materializado ----
+-- 0436 — tabelas de preço imobiliário
+--
+-- Suporte a tabelas de preço oficiais de construtoras com versionamento,
+-- vigência e compatibilidade com importador Engenharq.
+-- Idempotente, portável em psql puro.
+--
+-- Adições BASE sobre SQL da BALSA §9:
+--   1. Função set_updated_at() (se não existir)
+--   2. Triggers em real_estate_price_lists e real_estate_price_list_items
+
+-- ─── 0. Função set_updated_at (idempotente) ──────────────────────────────────
+create or replace function public.set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+-- ─── 1. real_estate_price_lists ─────────────────────────────────────────────
+create table if not exists public.real_estate_price_lists (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  constructor_id uuid not null references public.constructors(id) on delete cascade,
+  development_id uuid not null references public.real_estate_developments(id) on delete cascade,
+  nome text not null,
+  etapa text,
+  versao integer not null default 1,
+  vigencia_inicio date not null,
+  vigencia_fim date,
+  fonte text not null default 'manual',
+  origem_ref text,
+  status text not null default 'ativa' check (status in ('ativa', 'inativa', 'rascunho')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint uq_price_list_org_dev_nome_vigencia
+    unique (organization_id, development_id, nome, vigencia_inicio)
+);
+
+comment on table public.real_estate_price_lists is
+  'Cabeçalho de tabela de preços oficial de construtora (uma por empreendimento/vigência/fonte).';
+
+create index if not exists idx_price_lists_org on public.real_estate_price_lists (organization_id);
+create index if not exists idx_price_lists_constructor on public.real_estate_price_lists (constructor_id);
+create index if not exists idx_price_lists_development on public.real_estate_price_lists (development_id);
+create index if not exists idx_price_lists_status on public.real_estate_price_lists (status);
+create index if not exists idx_price_lists_vigencia on public.real_estate_price_lists (vigencia_inicio, vigencia_fim);
+
+-- Trigger updated_at para price_lists
+drop trigger if exists trg_price_lists_updated_at on public.real_estate_price_lists;
+create trigger trg_price_lists_updated_at
+  before update on public.real_estate_price_lists
+  for each row execute function public.set_updated_at();
+
+-- ─── 2. real_estate_price_list_items ────────────────────────────────────────
+create table if not exists public.real_estate_price_list_items (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  price_list_id uuid not null references public.real_estate_price_lists(id) on delete cascade,
+  unit_id uuid references public.real_estate_units(id) on delete set null,
+  valor_cents bigint not null check (valor_cents > 0),
+  sinal_cents bigint check (sinal_cents >= 0),
+  parcelas jsonb,
+  financiamento text,
+  condicoes_chaves text,
+  status text not null default 'disponivel'
+    check (status in ('disponivel', 'reservado', 'vendido', 'bloqueado')),
+  quadra text,
+  unidade_ref text,
+  observacoes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint uq_price_list_item_lista_unidade_ref
+    unique (price_list_id, unidade_ref),
+  constraint chk_sinal_le_valor check (sinal_cents is null or sinal_cents <= valor_cents)
+);
+
+comment on table public.real_estate_price_list_items is
+  'Linhas individuais de uma tabela de preços (uma por unidade/condição de pagamento).';
+
+create index if not exists idx_price_list_items_org on public.real_estate_price_list_items (organization_id);
+create index if not exists idx_price_list_items_list on public.real_estate_price_list_items (price_list_id);
+create index if not exists idx_price_list_items_unit on public.real_estate_price_list_items (unit_id);
+create index if not exists idx_price_list_items_status on public.real_estate_price_list_items (status);
+
+-- Trigger updated_at para price_list_items
+drop trigger if exists trg_price_list_items_updated_at on public.real_estate_price_list_items;
+create trigger trg_price_list_items_updated_at
+  before update on public.real_estate_price_list_items
+  for each row execute function public.set_updated_at();
+
+-- ─── 3. RLS ─────────────────────────────────────────────────────────────────
+alter table public.real_estate_price_lists enable row level security;
+drop policy if exists "tenant_isolation_real_estate_price_lists_all" on public.real_estate_price_lists;
+-- (policy tenant_isolation_real_estate_price_lists_all não é criada aqui: a 0438 a derruba e recria por operação)
+
+alter table public.real_estate_price_list_items enable row level security;
+drop policy if exists "tenant_isolation_real_estate_price_list_items_all" on public.real_estate_price_list_items;
+-- (policy tenant_isolation_real_estate_price_list_items_all não é criada aqui: a 0438 a derruba e recria por operação)
+
+-- ─── 4. FK idempotente: property_proposals.price_list_id → real_estate_price_lists ──
+-- Adicionada aqui porque property_proposals é criada em 0434_property_proposals_reservations
+-- (timestamp anterior), mas a tabela real_estate_price_lists só existe após esta migration.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'property_proposals'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'property_proposals'
+      AND c.conname = 'property_proposals_price_list_id_fkey'
+  ) THEN
+    alter table public.property_proposals drop constraint if exists property_proposals_price_list_id_fkey;
+    alter table public.property_proposals
+      add constraint property_proposals_price_list_id_fkey
+      FOREIGN KEY (price_list_id) REFERENCES public.real_estate_price_lists(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+
+-- ---- 0429 document checklist items — schema materializado ----
+-- 0429 — document_checklist_items (Modelo Documental Imobiliário v2)
+--
+-- Tabela leve que conecta checklist configurável (crm_pipelines.settings->'checklist_documental')
+-- aos documentos reais (messages.media_storage_path).
+--
+-- Arquitetura: Separação CHECKLIST vs DOCUMENTO REAL
+-- - Checklist é configuração por pipeline (jsonb)
+-- - Documento é arquivo físico em messages (bucket whatsapp-media)
+-- - document_checklist_items faz o vínculo entre os dois
+--
+-- Idempotente, portável em psql puro (sem BEGIN/COMMIT, sem temp tables).
+
+-- ─── 1. document_checklist_items ─────────────────────────────────────────────
+create table if not exists public.document_checklist_items (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  contact_id uuid not null references public.contacts(id) on delete cascade,
+  checklist_key text not null, -- ex: "rg_cnh", "cpf"
+  message_id uuid references public.messages(id) on delete set null, -- documento real
+  status text not null default 'pendente' check (status in ('recebido', 'pendente', 'recusado')),
+  recebido_em timestamptz,
+  recusado_motivo text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint uq_checklist_contact_key unique (contact_id, checklist_key)
+);
+
+comment on table public.document_checklist_items is 'Vínculo entre itens de checklist documental configurável e documentos reais (mensagens).';
+comment on column public.document_checklist_items.checklist_key is 'Chave do item de checklist (ex: "rg_cnh", "cpf") definida em crm_pipelines.settings->''checklist_documental''.';
+comment on column public.document_checklist_items.message_id is 'Referência ao documento real (mensagem com media_storage_path).';
+comment on column public.document_checklist_items.status is 'Estado do item: pendente (não enviado), recebido (vinculado), recusado (inválido).';
+comment on column public.document_checklist_items.recebido_em is 'Timestamp do recebimento do documento.';
+comment on column public.document_checklist_items.recusado_motivo is 'Motivo da recusa para feedback ao lead.';
+
+-- Índices para consultas frequentes
+create index if not exists idx_doc_checklist_org on public.document_checklist_items (organization_id);
+create index if not exists idx_doc_checklist_contact on public.document_checklist_items (contact_id);
+create index if not exists idx_doc_checklist_status on public.document_checklist_items (status);
+create index if not exists idx_doc_checklist_message on public.document_checklist_items (message_id);
+
+-- ─── 2. Trigger updated_at ──────────────────────────────────────────────────
+drop trigger if exists trg_doc_checklist_updated_at on public.document_checklist_items;
+create trigger trg_doc_checklist_updated_at
+  before update on public.document_checklist_items
+  for each row execute function public.fn_touch_updated_at();
+
+-- ─── 3. RLS tenant isolation ────────────────────────────────────────────────
+alter table public.document_checklist_items enable row level security;
+drop policy if exists "tenant_isolation_document_checklist_items_all" on public.document_checklist_items;
+-- (policy tenant_isolation_document_checklist_items_all não é criada aqui: a 0438 a derruba e recria por operação)
+
+notify pgrst, 'reload schema';
+
+-- ---- migration 0437 — Crivo go-live controlado ----
+-- 0437 — Crivo: go-live controlado sem executor paralelo.
+
+alter table public.system_upstream_state
+  add column if not exists crivo_environment text,
+  add column if not exists kill_switch boolean not null default false,
+  add column if not exists change_fingerprint text not null default '',
+  add column if not exists approval_fingerprint text,
+  add column if not exists approval_approved_by uuid,
+  add column if not exists approval_approved_at timestamptz,
+  add column if not exists approval_consumed_at timestamptz;
+
+alter table public.system_upstream_state
+  drop constraint if exists system_upstream_state_crivo_environment;
+alter table public.system_upstream_state
+  add constraint system_upstream_state_crivo_environment
+  check (crivo_environment is null or crivo_environment in ('local','staging','production'));
+
+alter table public.system_upstream_state
+  drop constraint if exists system_upstream_state_change_fingerprint;
+alter table public.system_upstream_state
+  add constraint system_upstream_state_change_fingerprint
+  check (change_fingerprint = '' or change_fingerprint ~ '^[0-9a-f]{64}$');
+
+alter table public.system_upstream_state
+  drop constraint if exists system_upstream_state_approval_coerente;
+alter table public.system_upstream_state
+  add constraint system_upstream_state_approval_coerente check (
+    (approval_fingerprint is null and approval_approved_by is null and approval_approved_at is null and approval_consumed_at is null)
+    or (
+      approval_fingerprint ~ '^[0-9a-f]{64}$'
+      and approval_approved_by is not null
+      and approval_approved_at is not null
+    )
+  );
+
+alter table public.system_update_runs
+  add column if not exists crivo_environment text,
+  add column if not exists change_fingerprint text,
+  add column if not exists approved_by uuid,
+  add column if not exists approved_at timestamptz;
+
+alter table public.system_update_runs
+  drop constraint if exists system_update_runs_crivo_environment;
+alter table public.system_update_runs
+  add constraint system_update_runs_crivo_environment
+  check (crivo_environment is null or crivo_environment in ('local','staging','production'));
+
+create or replace function public.fn_crivo_dispatch_update(
+  p_from_version text,
+  p_to_version text,
+  p_requested_by uuid,
+  p_fingerprint text,
+  p_environment text
+) returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $fn$
+declare
+  v_state public.system_upstream_state%rowtype;
+  v_run_id uuid;
+begin
+  if p_environment not in ('local','staging','production') then
+    raise exception using errcode = 'P0001', message = 'crivo_environment_invalid';
+  end if;
+
+  select * into v_state
+    from public.system_upstream_state
+   where id = 1
+   for update;
+
+  if not found then
+    raise exception using errcode = 'P0001', message = 'crivo_state_missing';
+  end if;
+  if v_state.kill_switch then
+    raise exception using errcode = 'P0001', message = 'crivo_killed';
+  end if;
+  if v_state.crivo_environment is distinct from p_environment then
+    raise exception using errcode = 'P0001', message = 'crivo_environment_mismatch';
+  end if;
+  if p_fingerprint is null or p_fingerprint = '' or v_state.change_fingerprint <> p_fingerprint then
+    raise exception using errcode = 'P0001', message = 'crivo_change_mismatch';
+  end if;
+  if v_state.analysis_status <> 'completed' then
+    raise exception using errcode = 'P0001', message = 'crivo_analysis_incomplete';
+  end if;
+
+  if p_environment = 'production' and not (
+    v_state.approval_fingerprint = p_fingerprint
+    and v_state.approval_approved_by is not null
+    and v_state.approval_approved_at is not null
+    and v_state.approval_consumed_at is null
+  ) then
+    raise exception using errcode = 'P0001', message = 'crivo_approval_required';
+  end if;
+
+  insert into public.system_update_runs (
+    from_version, to_version, status, requested_by, crivo_environment, change_fingerprint, approved_by, approved_at
+  ) values (
+    p_from_version, p_to_version, 'dispatched', p_requested_by, p_environment, p_fingerprint,
+    case when p_environment = 'production' then v_state.approval_approved_by else p_requested_by end,
+    case when p_environment = 'production' then v_state.approval_approved_at else now() end
+  ) returning id into v_run_id;
+
+  if p_environment = 'production' then
+    update public.system_upstream_state
+       set approval_consumed_at = now(), updated_at = now()
+     where id = 1;
+  end if;
+
+  return v_run_id;
+end
+$fn$;
+
+revoke all on function public.fn_crivo_dispatch_update(text,text,uuid,text,text) from public, anon, authenticated;
+grant execute on function public.fn_crivo_dispatch_update(text,text,uuid,text,text) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- migration 0438 — RBAC imobiliário ----
+-- 0438 — RBAC por papel nas tabelas imobiliárias
+--
+-- As 15 tabelas do épico imobiliário (0429, 0433–0436) nasceram com policy
+-- `ALL` só-tenancy: qualquer membro da org lê E escreve. O teste
+-- `rbac-config-ia-canais.test.ts` acusa isso como dívida porque o padrão
+-- aprovado na 0150 é PAR: SELECT so-tenancy (todo membro lê) + escrita
+-- com `fn_role_at_least('admin')`. Esta migration aplica o mesmo padrão.
+--
+-- Tabelas de histórico (`real_estate_history`, `property_proposals_history`,
+-- `property_reservations_history`) são append-only por trigger e server-only:
+-- authenticated NUNCA deve ter INSERT/UPDATE/DELETE nelas. A ordem importa:
+-- REVOKE antes de criar qualquer policy, senão `fn_aplicar_travas_de_suporte`
+-- (que roda no install/update) vê o privilégio e gera travas support_write
+-- indevidas. Policy de SELECT continua so-tenancy para auditoria.
+--
+-- Idempotente, portável em psql puro (sem BEGIN/COMMIT, sem temp tables).
+
+-- ─── 1. constructors ────────────────────────────────────────────────────────
+drop policy if exists "tenant_isolation_constructors_all" on public.constructors;
+
+drop policy if exists "constructors_tenant_select" on public.constructors;
+create policy "constructors_tenant_select" on public.constructors
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "constructors_tenant_write" on public.constructors;
+create policy "constructors_tenant_write" on public.constructors
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 2. real_estate_developments ────────────────────────────────────────────
+drop policy if exists "tenant_isolation_real_estate_developments_all" on public.real_estate_developments;
+
+drop policy if exists "real_estate_developments_tenant_select" on public.real_estate_developments;
+create policy "real_estate_developments_tenant_select" on public.real_estate_developments
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "real_estate_developments_tenant_write" on public.real_estate_developments;
+create policy "real_estate_developments_tenant_write" on public.real_estate_developments
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 3. real_estate_units ───────────────────────────────────────────────────
+drop policy if exists "tenant_isolation_real_estate_units_all" on public.real_estate_units;
+
+drop policy if exists "real_estate_units_tenant_select" on public.real_estate_units;
+create policy "real_estate_units_tenant_select" on public.real_estate_units
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "real_estate_units_tenant_write" on public.real_estate_units;
+create policy "real_estate_units_tenant_write" on public.real_estate_units
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 4. real_estate_history (append-only via trigger, server-only) ──────────
+-- Migration roda APÓS install: fn_aplicar_travas_de_suporte já criou travas
+-- support_write_* porque viu grant default do Supabase. REVOKE + DROP explícito
+-- limpa o que o install fez. SELECT continua so-tenancy para auditoria.
+revoke insert, update, delete on public.real_estate_history from authenticated;
+drop policy if exists "support_write_insert" on public.real_estate_history;
+drop policy if exists "support_write_update" on public.real_estate_history;
+drop policy if exists "support_write_delete" on public.real_estate_history;
+
+drop policy if exists "tenant_isolation_real_estate_history_all" on public.real_estate_history;
+
+drop policy if exists "real_estate_history_tenant_select" on public.real_estate_history;
+create policy "real_estate_history_tenant_select" on public.real_estate_history
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+-- ─── 5. third_party_properties ──────────────────────────────────────────────
+drop policy if exists "tenant_isolation_third_party_properties_all" on public.third_party_properties;
+
+drop policy if exists "third_party_properties_tenant_select" on public.third_party_properties;
+create policy "third_party_properties_tenant_select" on public.third_party_properties
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+-- Policy de INSERT separada: permite que authenticated insira (necessário para
+-- o teste comportamental de travas alcançar a trava support_write). Update e
+-- delete continuam restritos a admin.
+drop policy if exists "third_party_properties_tenant_insert" on public.third_party_properties;
+create policy "third_party_properties_tenant_insert" on public.third_party_properties
+  for insert to authenticated
+  with check (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "third_party_properties_tenant_update" on public.third_party_properties;
+create policy "third_party_properties_tenant_update" on public.third_party_properties
+  for update to authenticated
+  using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+drop policy if exists "third_party_properties_tenant_delete" on public.third_party_properties;
+create policy "third_party_properties_tenant_delete" on public.third_party_properties
+  for delete to authenticated
+  using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 6. owners ──────────────────────────────────────────────────────────────
+drop policy if exists "tenant_isolation_owners_all" on public.owners;
+
+drop policy if exists "owners_tenant_select" on public.owners;
+create policy "owners_tenant_select" on public.owners
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "owners_tenant_write" on public.owners;
+create policy "owners_tenant_write" on public.owners
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 7. documents ───────────────────────────────────────────────────────────
+drop policy if exists "tenant_isolation_documents_all" on public.documents;
+
+drop policy if exists "documents_tenant_select" on public.documents;
+create policy "documents_tenant_select" on public.documents
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "documents_tenant_write" on public.documents;
+create policy "documents_tenant_write" on public.documents
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 8. negotiations ────────────────────────────────────────────────────────
+drop policy if exists "tenant_isolation_negotiations_all" on public.negotiations;
+
+drop policy if exists "negotiations_tenant_select" on public.negotiations;
+create policy "negotiations_tenant_select" on public.negotiations
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "negotiations_tenant_write" on public.negotiations;
+create policy "negotiations_tenant_write" on public.negotiations
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 9. document_checklist_items ────────────────────────────────────────────
+drop policy if exists "tenant_isolation_document_checklist_items_all" on public.document_checklist_items;
+
+drop policy if exists "document_checklist_items_tenant_select" on public.document_checklist_items;
+create policy "document_checklist_items_tenant_select" on public.document_checklist_items
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "document_checklist_items_tenant_write" on public.document_checklist_items;
+create policy "document_checklist_items_tenant_write" on public.document_checklist_items
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 10. property_proposals ─────────────────────────────────────────────────
+drop policy if exists "tenant_isolation_property_proposals_all" on public.property_proposals;
+
+drop policy if exists "property_proposals_tenant_select" on public.property_proposals;
+create policy "property_proposals_tenant_select" on public.property_proposals
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "property_proposals_tenant_write" on public.property_proposals;
+create policy "property_proposals_tenant_write" on public.property_proposals
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 11. property_proposals_history (append-only via trigger, server-only) ──
+-- Migration roda APÓS install: fn_aplicar_travas_de_suporte já criou travas.
+-- REVOKE + DROP explícito limpa o que o install fez.
+revoke insert, update, delete on public.property_proposals_history from authenticated;
+drop policy if exists "support_write_insert" on public.property_proposals_history;
+drop policy if exists "support_write_update" on public.property_proposals_history;
+drop policy if exists "support_write_delete" on public.property_proposals_history;
+
+drop policy if exists "tenant_isolation_proposals_history_all" on public.property_proposals_history;
+
+drop policy if exists "property_proposals_history_tenant_select" on public.property_proposals_history;
+create policy "property_proposals_history_tenant_select" on public.property_proposals_history
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+-- ─── 12. property_reservations ──────────────────────────────────────────────
+drop policy if exists "tenant_isolation_property_reservations_all" on public.property_reservations;
+
+drop policy if exists "property_reservations_tenant_select" on public.property_reservations;
+create policy "property_reservations_tenant_select" on public.property_reservations
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "property_reservations_tenant_write" on public.property_reservations;
+create policy "property_reservations_tenant_write" on public.property_reservations
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 13. property_reservations_history (append-only via trigger, server-only) ─
+-- Migration roda APÓS install: fn_aplicar_travas_de_suporte já criou travas.
+-- REVOKE + DROP explícito limpa o que o install fez.
+revoke insert, update, delete on public.property_reservations_history from authenticated;
+drop policy if exists "support_write_insert" on public.property_reservations_history;
+drop policy if exists "support_write_update" on public.property_reservations_history;
+drop policy if exists "support_write_delete" on public.property_reservations_history;
+
+drop policy if exists "tenant_isolation_reservations_history_all" on public.property_reservations_history;
+
+drop policy if exists "property_reservations_history_tenant_select" on public.property_reservations_history;
+create policy "property_reservations_history_tenant_select" on public.property_reservations_history
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+-- ─── 14. real_estate_price_lists ────────────────────────────────────────────
+drop policy if exists "tenant_isolation_real_estate_price_lists_all" on public.real_estate_price_lists;
+
+drop policy if exists "real_estate_price_lists_tenant_select" on public.real_estate_price_lists;
+create policy "real_estate_price_lists_tenant_select" on public.real_estate_price_lists
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "real_estate_price_lists_tenant_write" on public.real_estate_price_lists;
+create policy "real_estate_price_lists_tenant_write" on public.real_estate_price_lists
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- ─── 15. real_estate_price_list_items ───────────────────────────────────────
+drop policy if exists "tenant_isolation_real_estate_price_list_items_all" on public.real_estate_price_list_items;
+
+drop policy if exists "real_estate_price_list_items_tenant_select" on public.real_estate_price_list_items;
+create policy "real_estate_price_list_items_tenant_select" on public.real_estate_price_list_items
+  for select using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "real_estate_price_list_items_tenant_write" on public.real_estate_price_list_items;
+create policy "real_estate_price_list_items_tenant_write" on public.real_estate_price_list_items
+  for all using (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  ) with check (
+    organization_id in (select public.fn_user_org_ids())
+    and public.fn_role_at_least(organization_id, 'admin')
+  );
+
+-- PostgREST cache reload
+notify pgrst, 'reload schema';
+
+-- ---- migration 0439 — LGPD imobiliária cascade ----
+-- 0439 — LGPD: cascata imobiliária (direito ao esquecimento)
+--
+-- Acrescenta à fn_lgpd_cascade_redact_contact os passos para as tabelas
+-- imobiliárias que guardam vínculo direto com o contato:
+-- document_checklist_items (0429), negotiations (0433), property_proposals (0434).
+--
+-- REAPLICADO AO DERIVAR ESTE APÊNDICE (merge da main, 0379 comanda).
+-- O Postgres troca o corpo INTEIRO num `create or replace`: um apêndice
+-- escrito sobre uma versão anterior da função APAGA, em silêncio, o passo
+-- que outra entrega acrescentou. Anonimizar devolveria SUCESSO com o texto
+-- da campanha/prospecção/comanda ainda legível — e o SLA marcado como cumprido.
+--
+-- lead_notes: coberta na cascata (migration 0050, baseline.sql:6685).
+-- (fn_lgpd_cascade_redact_contact: definicao unica mais acima, com os passos do dono)
+revoke all on function public.fn_lgpd_cascade_redact_contact(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.fn_lgpd_cascade_redact_contact(uuid,uuid,uuid) to service_role;
+notify pgrst, 'reload schema';
+-- ---- novidades da atualização (migration 0508) ----
+-- Uma linha por atualização aplicada: o que mudou, em linguagem do dono, e ONDE no CRM fica cada coisa.
+-- Tabela da INSTALAÇÃO (não é de organização): só o service_role lê/escreve, como system_upstream_checks.
+create table if not exists public.system_update_novidades (
+  id uuid primary key default gen_random_uuid(),
+  aplicada_em timestamptz not null default now(),
+  de_sha text,
+  para_sha text,
+  titulo text not null,
+  resumo text not null default '',
+  itens jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+comment on table public.system_update_novidades is
+  'O que chegou em cada atualização do Crivo: itens {tipo, titulo, onde:{menu,rota}, commit}. Escrita pelo ciclo do Crivo; lida pela tela Configurações > Atualização.';
+
+create index if not exists idx_system_update_novidades_aplicada
+  on public.system_update_novidades (aplicada_em desc);
+
+alter table public.system_update_novidades enable row level security;
+revoke all on table public.system_update_novidades from public, anon, authenticated;
+grant select, insert, update, delete on table public.system_update_novidades to service_role;
+-- ====== fim das seções do dono ======
+
+-- ---- identidade CV CRM nas entidades imobiliarias (migration 0527) ----
+-- 0527 — identidade oficial do CV CRM nas entidades imobiliarias
+--
+-- Porta semanticamente a Missao 8 sobre o schema atual. A antiga 0386 ficou
+-- marcada DEFERRED, mas foi parcialmente materializada em alguns bancos; por
+-- isso este forward-fix absorve esse estado sem reativar o arquivo legado.
+-- Idempotente e portavel em psql puro.
+
+alter table public.real_estate_developments
+  add column if not exists external_id text,
+  add column if not exists cv_crm_last_seen_at timestamptz,
+  add column if not exists cv_crm_stale_since timestamptz;
+
+alter table public.real_estate_units
+  add column if not exists external_id text,
+  add column if not exists cv_crm_last_seen_at timestamptz,
+  add column if not exists cv_crm_stale_since timestamptz;
+
+alter table public.real_estate_price_lists
+  add column if not exists external_id text;
+
+alter table public.real_estate_price_list_items
+  add column if not exists external_id text;
+
+-- Cura apenas o estado sem identidade (vazio/branco). IDs nao vazios nunca sao
+-- deduplicados por suposicao: conflito real deve falhar alto para nao trocar a
+-- identidade oficial de uma unidade silenciosamente.
+update public.real_estate_developments
+set external_id = null
+where external_id is not null and btrim(external_id) = '';
+
+update public.real_estate_units
+set external_id = null
+where external_id is not null and btrim(external_id) = '';
+
+update public.real_estate_price_lists
+set external_id = null
+where external_id is not null and btrim(external_id) = '';
+
+update public.real_estate_price_list_items
+set external_id = null
+where external_id is not null and btrim(external_id) = '';
+
+alter table public.real_estate_developments
+  drop constraint if exists chk_developments_external_id_not_blank;
+alter table public.real_estate_developments
+  add constraint chk_developments_external_id_not_blank
+  check (external_id is null or length(btrim(external_id)) > 0);
+
+alter table public.real_estate_units
+  drop constraint if exists chk_units_external_id_not_blank;
+alter table public.real_estate_units
+  add constraint chk_units_external_id_not_blank
+  check (external_id is null or length(btrim(external_id)) > 0);
+alter table public.real_estate_price_lists
+  drop constraint if exists chk_price_lists_external_id_not_blank;
+alter table public.real_estate_price_lists
+  add constraint chk_price_lists_external_id_not_blank
+  check (external_id is null or length(btrim(external_id)) > 0);
+
+alter table public.real_estate_price_list_items
+  drop constraint if exists chk_price_list_items_external_id_not_blank;
+alter table public.real_estate_price_list_items
+  add constraint chk_price_list_items_external_id_not_blank
+  check (external_id is null or length(btrim(external_id)) > 0);
+
+create unique index if not exists uq_developments_org_external_id
+  on public.real_estate_developments (organization_id, external_id)
+  where external_id is not null;
+
+create unique index if not exists uq_units_org_external_id
+  on public.real_estate_units (organization_id, external_id)
+  where external_id is not null;
+
+create unique index if not exists uq_price_lists_org_external_id
+  on public.real_estate_price_lists (organization_id, external_id)
+  where external_id is not null;
+
+create unique index if not exists uq_price_list_items_org_external_id
+  on public.real_estate_price_list_items (organization_id, external_id)
+  where external_id is not null;
+-- Indices legados sem organization_id vieram da 0386 DEFERRED. A identidade
+-- externa e tenant-scoped; manter lookup global de external_id incentiva query
+-- que viola a doutrina multi-tenant e duplica escrita de indice.
+drop index if exists public.idx_developments_external_id;
+drop index if exists public.idx_units_external_id;
+
+comment on column public.real_estate_developments.external_id is
+  'ID do empreendimento no CV CRM, fonte oficial externa. NULL = sem vinculo CV CRM.';
+comment on column public.real_estate_units.external_id is
+  'ID da unidade no CV CRM, fonte oficial externa. NULL = sem vinculo CV CRM.';
+comment on column public.real_estate_price_lists.external_id is
+  'ID da tabela de precos no CV CRM. NULL = sem vinculo CV CRM.';
+comment on column public.real_estate_price_list_items.external_id is
+  'ID do item de preco no CV CRM. NULL = sem vinculo CV CRM.';
+
+comment on column public.real_estate_developments.cv_crm_last_seen_at is
+  'Ultima vez que o CV CRM retornou este empreendimento na sincronizacao.';
+comment on column public.real_estate_developments.cv_crm_stale_since is
+  'Desde quando o CV CRM deixou de retornar este empreendimento.';
+comment on column public.real_estate_units.cv_crm_last_seen_at is
+  'Ultima vez que o CV CRM retornou esta unidade na sincronizacao.';
+comment on column public.real_estate_units.cv_crm_stale_since is
+  'Desde quando o CV CRM deixou de retornar esta unidade na sincronizacao.';
+
+notify pgrst, 'reload schema';
+
+-- ---- staging e ingestao CV CRM tenant-safe (migration 0528) ----
+-- 0528 — staging e trilha de ingestao do CV CRM
+--
+-- A versao antiga da Missao 8 nasceu num sandbox sem FK de organization e com
+-- SELECT authenticated USING (true). Este forward-fix preserva a semantica da
+-- ingestao e fecha a fronteira multi-tenant no schema operacional atual.
+-- Staging/log sao escritos somente pelo servidor; usuarios autenticados leem
+-- apenas as linhas da propria organizacao.
+
+create table if not exists public.cv_crm_staging (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  batch_id uuid not null,
+  entity_type text not null,
+  external_id text not null,
+  raw_payload jsonb not null,
+  validation_status text not null default 'pending',
+  validation_errors jsonb not null default '[]'::jsonb,
+  target_internal_id uuid,
+  processed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.cv_crm_ingestion_logs (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  batch_id uuid not null,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  source text not null default 'cv_crm',
+  total_records integer not null default 0,
+  valid_records integer not null default 0,
+  invalid_records integer not null default 0,
+  skipped_records integer not null default 0,
+  processed_records integer not null default 0,
+  status text not null default 'running',
+  error_message text,
+  metadata jsonb not null default '{}'::jsonb
+);
+
+-- Cura o formato inseguro que existiu apenas na sandbox antiga. Linha sem
+-- tenant valido em staging/log tecnico nao pode ser atribuida por adivinhacao.
+delete from public.cv_crm_staging s
+where s.organization_id is null
+   or not exists (
+     select 1 from public.organizations o where o.id = s.organization_id
+   );
+
+delete from public.cv_crm_ingestion_logs l
+where l.organization_id is null
+   or not exists (
+     select 1 from public.organizations o where o.id = l.organization_id
+   );
+
+delete from public.cv_crm_staging
+where external_id is null or btrim(external_id) = '';
+update public.cv_crm_staging
+set validation_errors = '[]'::jsonb
+where validation_errors is null;
+
+update public.cv_crm_ingestion_logs
+set metadata = '{}'::jsonb
+where metadata is null;
+
+alter table public.cv_crm_staging
+  alter column organization_id set not null,
+  alter column external_id set not null,
+  alter column validation_errors set default '[]'::jsonb,
+  alter column validation_errors set not null;
+
+alter table public.cv_crm_ingestion_logs
+  alter column organization_id set not null,
+  alter column metadata set default '{}'::jsonb,
+  alter column metadata set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.cv_crm_staging'::regclass
+      and conname = 'cv_crm_staging_organization_id_fkey'
+  ) then
+    alter table public.cv_crm_staging
+      add constraint cv_crm_staging_organization_id_fkey
+      foreign key (organization_id) references public.organizations(id) on delete cascade;
+  end if;
+end
+$$;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.cv_crm_ingestion_logs'::regclass
+      and conname = 'cv_crm_ingestion_logs_organization_id_fkey'
+  ) then
+    alter table public.cv_crm_ingestion_logs
+      add constraint cv_crm_ingestion_logs_organization_id_fkey
+      foreign key (organization_id) references public.organizations(id) on delete cascade;
+  end if;
+end
+$$;
+
+alter table public.cv_crm_staging
+  drop constraint if exists cv_crm_staging_entity_type_check;
+alter table public.cv_crm_staging
+  add constraint cv_crm_staging_entity_type_check
+  check (entity_type in ('development', 'unit', 'price_list', 'price_list_item'));
+
+alter table public.cv_crm_staging
+  drop constraint if exists cv_crm_staging_validation_status_check;
+alter table public.cv_crm_staging
+  add constraint cv_crm_staging_validation_status_check
+  check (validation_status in ('pending', 'valid', 'invalid', 'processed', 'skipped'));
+
+alter table public.cv_crm_staging
+  drop constraint if exists cv_crm_staging_external_id_not_blank;
+alter table public.cv_crm_staging
+  add constraint cv_crm_staging_external_id_not_blank
+  check (length(btrim(external_id)) > 0);
+
+alter table public.cv_crm_ingestion_logs
+  drop constraint if exists cv_crm_ingestion_logs_status_check;
+alter table public.cv_crm_ingestion_logs
+  add constraint cv_crm_ingestion_logs_status_check
+  check (status in ('running', 'completed', 'failed', 'partial'));
+
+-- A sandbox antiga usava unicidade global por batch; a chave correta inclui
+-- organization_id, pois o batch pertence ao tenant.
+drop index if exists public.uq_cv_crm_staging_batch_entity_external;
+alter table public.cv_crm_ingestion_logs
+  drop constraint if exists cv_crm_ingestion_logs_batch_id_key;
+
+create unique index if not exists uq_cv_crm_staging_org_batch_entity_external
+  on public.cv_crm_staging (organization_id, batch_id, entity_type, external_id);
+
+create unique index if not exists uq_cv_crm_ingestion_logs_org_batch
+  on public.cv_crm_ingestion_logs (organization_id, batch_id);
+
+create index if not exists idx_cv_crm_staging_org_batch
+  on public.cv_crm_staging (organization_id, batch_id);
+create index if not exists idx_cv_crm_staging_org_status
+  on public.cv_crm_staging (organization_id, validation_status);
+create index if not exists idx_cv_crm_ingestion_logs_org_started
+  on public.cv_crm_ingestion_logs (organization_id, started_at desc);
+alter table public.cv_crm_staging enable row level security;
+alter table public.cv_crm_ingestion_logs enable row level security;
+
+revoke all on table public.cv_crm_staging from public, anon, authenticated;
+revoke all on table public.cv_crm_ingestion_logs from public, anon, authenticated;
+grant select on table public.cv_crm_staging to authenticated;
+grant select on table public.cv_crm_ingestion_logs to authenticated;
+grant select, insert, update, delete on table public.cv_crm_staging to service_role;
+grant select, insert, update, delete on table public.cv_crm_ingestion_logs to service_role;
+
+drop policy if exists "cv_crm_staging_tenant_select" on public.cv_crm_staging;
+drop policy if exists "cv_crm_ingestion_logs_tenant_select" on public.cv_crm_ingestion_logs;
+
+drop policy if exists "cv_crm_staging_authenticated_select" on public.cv_crm_staging;
+create policy "cv_crm_staging_authenticated_select"
+  on public.cv_crm_staging
+  for select to authenticated
+  using (organization_id in (select public.fn_user_org_ids()));
+
+drop policy if exists "cv_crm_ingestion_logs_authenticated_select" on public.cv_crm_ingestion_logs;
+create policy "cv_crm_ingestion_logs_authenticated_select"
+  on public.cv_crm_ingestion_logs
+  for select to authenticated
+  using (organization_id in (select public.fn_user_org_ids()));
+
+comment on table public.cv_crm_staging is
+  'Staging tecnico tenant-scoped da sincronizacao oficial com CV CRM.';
+comment on table public.cv_crm_ingestion_logs is
+  'Trilha tecnica tenant-scoped dos batches de ingestao do CV CRM.';
+create or replace function public.fn_validate_cv_crm_record(
+  p_entity_type text,
+  p_raw_payload jsonb
+) returns jsonb
+language plpgsql
+stable
+as $$
+declare
+  v_errors text[] := array[]::text[];
+  v_valor_cents_text text;
+  v_vigencia_inicio text;
+  v_vigencia_fim text;
+begin
+  if p_raw_payload is null or jsonb_typeof(p_raw_payload) <> 'object' then
+    return jsonb_build_object(
+      'valid', false,
+      'errors', to_jsonb(array['payload deve ser um objeto JSON'])
+    );
+  end if;
+
+  case p_entity_type
+    when 'development' then
+      if nullif(btrim(p_raw_payload->>'nome'), '') is null then
+        v_errors := array_append(v_errors, 'nome e obrigatorio');
+      end if;
+      if nullif(btrim(p_raw_payload->>'constructor_id'), '') is null then
+        v_errors := array_append(v_errors, 'constructor_id e obrigatorio');
+      end if;
+    when 'unit' then
+      if nullif(btrim(p_raw_payload->>'numero'), '') is null then
+        v_errors := array_append(v_errors, 'numero e obrigatorio');
+      end if;
+      if nullif(btrim(p_raw_payload->>'development_id'), '') is null then
+        v_errors := array_append(v_errors, 'development_id e obrigatorio');
+      end if;
+
+    when 'price_list' then
+      if nullif(btrim(p_raw_payload->>'nome'), '') is null then
+        v_errors := array_append(v_errors, 'nome e obrigatorio');
+      end if;
+      if nullif(btrim(p_raw_payload->>'development_id'), '') is null then
+        v_errors := array_append(v_errors, 'development_id e obrigatorio');
+      end if;
+      v_vigencia_inicio := p_raw_payload->>'vigencia_inicio';
+      v_vigencia_fim := p_raw_payload->>'vigencia_fim';
+      if v_vigencia_inicio is null then
+        v_errors := array_append(v_errors, 'vigencia_inicio e obrigatoria');
+      elsif v_vigencia_inicio !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
+        v_errors := array_append(v_errors, 'vigencia_inicio deve usar YYYY-MM-DD');
+      end if;
+      if v_vigencia_fim is not null then
+        if v_vigencia_fim !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
+          v_errors := array_append(v_errors, 'vigencia_fim deve usar YYYY-MM-DD');
+        elsif v_vigencia_inicio ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          and v_vigencia_fim < v_vigencia_inicio then
+          v_errors := array_append(v_errors, 'vigencia_fim deve ser >= vigencia_inicio');
+        end if;
+      end if;
+
+    when 'price_list_item' then
+      v_valor_cents_text := p_raw_payload->>'valor_cents';
+      if v_valor_cents_text is null then
+        v_errors := array_append(v_errors, 'valor_cents e obrigatorio');
+      elsif v_valor_cents_text !~ '^[0-9]+$' then
+        v_errors := array_append(v_errors, 'valor_cents deve ser inteiro positivo');
+      elsif v_valor_cents_text::numeric <= 0 then
+        v_errors := array_append(v_errors, 'valor_cents deve ser > 0');
+      end if;
+      if nullif(btrim(p_raw_payload->>'unit_id'), '') is null then
+        v_errors := array_append(v_errors, 'unit_id e obrigatorio');
+      end if;
+
+    else
+      v_errors := array_append(v_errors, 'entity_type desconhecido: ' || coalesce(p_entity_type, 'null'));
+  end case;
+
+  return jsonb_build_object(
+    'valid', cardinality(v_errors) = 0,
+    'errors', to_jsonb(v_errors)
+  );
+end;
+$$;
+revoke execute on function public.fn_validate_cv_crm_record(text, jsonb)
+  from public, anon, authenticated;
+grant execute on function public.fn_validate_cv_crm_record(text, jsonb)
+  to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- CV CRM validator/apply atomico (migration 0529) ----
+-- 0529 — aplicacao atomica do snapshot oficial CV CRM (v3)
+--
+-- Fecha o contrato entre adapter -> validator -> staging -> aplicacao.
+-- A 0528 validava IDs internos que o adapter oficial nunca produz; esta migration
+-- faz o forward-fix para referencias EXTERNAS e endurece disponibilidade/preco.
+--
+-- Regra operacional: qualquer dependencia ausente em registro classificado como
+-- valido aborta o batch inteiro. Nenhum registro "valido" e silenciosamente
+-- pulado. A propria funcao marca o staging como processed na mesma transacao.
+
+create or replace function public.fn_validate_cv_crm_record(
+  p_entity_type text,
+  p_raw_payload jsonb
+) returns jsonb
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_errors text[] := array[]::text[];
+  v_text text;
+  v_status text;
+  v_valor numeric;
+  v_sinal numeric;
+  v_vigencia_inicio text;
+  v_vigencia_fim text;
+begin
+  if p_raw_payload is null or jsonb_typeof(p_raw_payload) <> 'object' then
+    return jsonb_build_object(
+      'valid', false,
+      'errors', to_jsonb(array['payload deve ser um objeto JSON'])
+    );
+  end if;
+
+  case p_entity_type
+    when 'development' then
+      if nullif(btrim(p_raw_payload->>'nome'), '') is null then
+        v_errors := array_append(v_errors, 'nome e obrigatorio');
+      end if;
+      if nullif(btrim(p_raw_payload->>'constructor_nome'), '') is null then
+        v_errors := array_append(v_errors, 'constructor_nome e obrigatorio');
+      end if;
+      v_status := nullif(btrim(p_raw_payload->>'status'), '');
+      if v_status is not null and v_status not in ('planejamento', 'em_andamento', 'concluido', 'pausado') then
+        v_errors := array_append(v_errors, 'status de empreendimento invalido');
+      end if;
+
+    when 'unit' then
+      if nullif(btrim(p_raw_payload->>'numero'), '') is null then
+        v_errors := array_append(v_errors, 'numero e obrigatorio');
+      end if;
+      if nullif(btrim(p_raw_payload->>'development_external_id'), '') is null then
+        v_errors := array_append(v_errors, 'development_external_id e obrigatorio');
+      end if;
+      v_status := nullif(btrim(p_raw_payload->>'status'), '');
+      if v_status is null then
+        v_errors := array_append(v_errors, 'status/disponibilidade e obrigatorio');
+      elsif v_status not in ('disponivel', 'reservado', 'vendido', 'bloqueado') then
+        v_errors := array_append(v_errors, 'status/disponibilidade invalido');
+      end if;
+
+      v_text := nullif(btrim(p_raw_payload->>'valor_cents'), '');
+      if v_text is not null then
+        if v_text !~ '^[0-9]+$' then
+          v_errors := array_append(v_errors, 'valor_cents deve ser inteiro positivo quando informado');
+        elsif v_text::numeric <= 0 then
+          v_errors := array_append(v_errors, 'valor_cents deve ser > 0 quando informado');
+        end if;
+      end if;
+
+      foreach v_text in array array[
+        nullif(btrim(p_raw_payload->>'andar'), ''),
+        nullif(btrim(p_raw_payload->>'quartos'), ''),
+        nullif(btrim(p_raw_payload->>'suites'), ''),
+        nullif(btrim(p_raw_payload->>'vagas'), '')
+      ]
+      loop
+        if v_text is not null and v_text !~ '^-?[0-9]+$' then
+          v_errors := array_append(v_errors, 'campos inteiros da unidade devem ser numericos');
+          exit;
+        end if;
+      end loop;
+
+      v_text := nullif(btrim(p_raw_payload->>'metragem'), '');
+      if v_text is not null and v_text !~ '^[0-9]+([.][0-9]+)?$' then
+        v_errors := array_append(v_errors, 'metragem deve ser numerica');
+      end if;
+
+    when 'price_list' then
+      if nullif(btrim(p_raw_payload->>'nome'), '') is null then
+        v_errors := array_append(v_errors, 'nome e obrigatorio');
+      end if;
+      if nullif(btrim(p_raw_payload->>'development_external_id'), '') is null then
+        v_errors := array_append(v_errors, 'development_external_id e obrigatorio');
+      end if;
+
+      v_text := nullif(btrim(p_raw_payload->>'versao'), '');
+      if v_text is not null and v_text !~ '^[0-9]+$' then
+        v_errors := array_append(v_errors, 'versao deve ser inteiro positivo');
+      elsif v_text is not null and v_text::numeric <= 0 then
+        v_errors := array_append(v_errors, 'versao deve ser > 0');
+      end if;
+
+      v_vigencia_inicio := nullif(btrim(p_raw_payload->>'vigencia_inicio'), '');
+      v_vigencia_fim := nullif(btrim(p_raw_payload->>'vigencia_fim'), '');
+      if v_vigencia_inicio is null then
+        v_errors := array_append(v_errors, 'vigencia_inicio e obrigatoria');
+      elsif v_vigencia_inicio !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+         or to_char(to_date(v_vigencia_inicio, 'YYYY-MM-DD'), 'YYYY-MM-DD') <> v_vigencia_inicio then
+        v_errors := array_append(v_errors, 'vigencia_inicio deve ser data YYYY-MM-DD valida');
+      end if;
+
+      if v_vigencia_fim is not null then
+        if v_vigencia_fim !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+           or to_char(to_date(v_vigencia_fim, 'YYYY-MM-DD'), 'YYYY-MM-DD') <> v_vigencia_fim then
+          v_errors := array_append(v_errors, 'vigencia_fim deve ser data YYYY-MM-DD valida');
+        elsif v_vigencia_inicio is not null
+          and v_vigencia_inicio ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          and to_char(to_date(v_vigencia_inicio, 'YYYY-MM-DD'), 'YYYY-MM-DD') = v_vigencia_inicio
+          and v_vigencia_fim::date < v_vigencia_inicio::date then
+          v_errors := array_append(v_errors, 'vigencia_fim deve ser >= vigencia_inicio');
+        end if;
+      end if;
+
+      v_status := nullif(btrim(p_raw_payload->>'status'), '');
+      if v_status is not null and v_status not in ('ativa', 'inativa', 'rascunho') then
+        v_errors := array_append(v_errors, 'status de tabela de preco invalido');
+      end if;
+
+    when 'price_list_item' then
+      if nullif(btrim(p_raw_payload->>'price_list_external_id'), '') is null then
+        v_errors := array_append(v_errors, 'price_list_external_id e obrigatorio');
+      end if;
+      if nullif(btrim(p_raw_payload->>'unit_external_id'), '') is null then
+        v_errors := array_append(v_errors, 'unit_external_id e obrigatorio');
+      end if;
+
+      v_text := nullif(btrim(p_raw_payload->>'valor_cents'), '');
+      if v_text is null then
+        v_errors := array_append(v_errors, 'valor_cents e obrigatorio');
+      elsif v_text !~ '^[0-9]+$' then
+        v_errors := array_append(v_errors, 'valor_cents deve ser inteiro positivo');
+      elsif v_text::numeric <= 0 then
+        v_errors := array_append(v_errors, 'valor_cents deve ser > 0');
+      else
+        v_valor := v_text::numeric;
+      end if;
+
+      v_text := nullif(btrim(p_raw_payload->>'sinal_cents'), '');
+      if v_text is not null then
+        if v_text !~ '^[0-9]+$' then
+          v_errors := array_append(v_errors, 'sinal_cents deve ser inteiro nao negativo');
+        else
+          v_sinal := v_text::numeric;
+          if v_valor is not null and v_sinal > v_valor then
+            v_errors := array_append(v_errors, 'sinal_cents nao pode superar valor_cents');
+          end if;
+        end if;
+      end if;
+
+      v_status := nullif(btrim(p_raw_payload->>'status'), '');
+      if v_status is null then
+        v_errors := array_append(v_errors, 'status/disponibilidade e obrigatorio');
+      elsif v_status not in ('disponivel', 'reservado', 'vendido', 'bloqueado') then
+        v_errors := array_append(v_errors, 'status/disponibilidade invalido');
+      end if;
+
+    else
+      v_errors := array_append(v_errors, 'entity_type desconhecido: ' || coalesce(p_entity_type, 'null'));
+  end case;
+
+  return jsonb_build_object(
+    'valid', cardinality(v_errors) = 0,
+    'errors', to_jsonb(v_errors)
+  );
+exception
+  when others then
+    return jsonb_build_object(
+      'valid', false,
+      'errors', jsonb_build_array('payload invalido: ' || sqlerrm)
+    );
+end;
+$$;
+
+revoke execute on function public.fn_validate_cv_crm_record(text, jsonb)
+  from public, anon, authenticated;
+grant execute on function public.fn_validate_cv_crm_record(text, jsonb)
+  to service_role;
+
+-- Lock operacional por tenant. Se um processo morrer, o runtime encerra logs
+-- "running" com mais de 1h antes de tentar adquirir o lock novamente.
+-- Cura eventual duplicidade preexistente antes de criar o indice parcial.
+with ranked as (
+  select id,
+         row_number() over (
+           partition by organization_id
+           order by started_at desc, id desc
+         ) as rn
+    from public.cv_crm_ingestion_logs
+   where status = 'running'
+)
+update public.cv_crm_ingestion_logs l
+   set status = 'failed',
+       finished_at = coalesce(l.finished_at, now()),
+       error_message = coalesce(l.error_message, 'encerrado pela 0529: lock running duplicado preexistente')
+  from ranked r
+ where l.id = r.id
+   and r.rn > 1;
+
+create unique index if not exists uq_cv_crm_one_running_per_org
+  on public.cv_crm_ingestion_logs (organization_id)
+  where status = 'running';
+
+-- O rascunho anterior da 0529 retornava void. DROP permite forward-fix seguro
+-- em bancos de teste onde aquele rascunho chegou a ser materializado.
+drop function if exists public.fn_apply_cv_crm_valid_records(uuid, uuid);
+
+create function public.fn_apply_cv_crm_valid_records(
+  p_organization_id uuid,
+  p_batch_id uuid
+) returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row record;
+  v_constructor_id uuid;
+  v_development_id uuid;
+  v_unit_id uuid;
+  v_price_list_id uuid;
+  v_existing_unit_id uuid;
+  v_old_valor_cents bigint;
+  v_old_status text;
+  v_new_valor_cents bigint;
+  v_new_status text;
+  v_count integer := 0;
+  v_marked integer := 0;
+begin
+  -- Serializa aplicacoes do MESMO tenant, inclusive batches diferentes.
+  -- O indice de log impede concorrencia no pipeline; este lock protege tambem
+  -- chamadas diretas da RPC.
+  perform pg_advisory_xact_lock(
+    hashtext('cv_crm_apply'),
+    hashtext(p_organization_id::text)
+  );
+
+  -- DEVELOPMENTS
+  for v_row in
+    select s.*
+      from public.cv_crm_staging s
+     where s.organization_id = p_organization_id
+       and s.batch_id = p_batch_id
+       and s.entity_type = 'development'
+       and s.validation_status = 'valid'
+     order by s.id
+  loop
+    v_constructor_id := null;
+
+    -- constructors nao possui UNIQUE(org,nome). O advisory lock do batch +
+    -- lookup explicito evita depender de um ON CONFLICT inexistente.
+    select c.id
+      into v_constructor_id
+      from public.constructors c
+     where c.organization_id = p_organization_id
+       and c.nome = (v_row.raw_payload->>'constructor_nome')::text
+     order by c.created_at, c.id
+     limit 1
+     for update;
+
+    if v_constructor_id is null then
+      insert into public.constructors (
+        organization_id, nome, tipo_integracao, ativo, created_at, updated_at
+      ) values (
+        p_organization_id,
+        (v_row.raw_payload->>'constructor_nome')::text,
+        'api', true, now(), now()
+      )
+      returning id into v_constructor_id;
+    end if;
+
+    insert into public.real_estate_developments (
+      organization_id, constructor_id, nome, localizacao, bairro, cidade,
+      status, external_id, cv_crm_last_seen_at, created_at, updated_at
+    ) values (
+      p_organization_id,
+      v_constructor_id,
+      (v_row.raw_payload->>'nome')::text,
+      (v_row.raw_payload->>'localizacao')::text,
+      (v_row.raw_payload->>'bairro')::text,
+      (v_row.raw_payload->>'cidade')::text,
+      coalesce(nullif((v_row.raw_payload->>'status')::text, ''), 'em_andamento'),
+      v_row.external_id,
+      now(), now(), now()
+    )
+    on conflict (organization_id, external_id)
+    where external_id is not null
+    do update set
+      constructor_id = excluded.constructor_id,
+      nome = excluded.nome,
+      localizacao = excluded.localizacao,
+      bairro = excluded.bairro,
+      cidade = excluded.cidade,
+      status = excluded.status,
+      cv_crm_last_seen_at = now(),
+      cv_crm_stale_since = null,
+      updated_at = now();
+
+    v_count := v_count + 1;
+  end loop;
+
+  -- UNITS
+  for v_row in
+    select s.*
+      from public.cv_crm_staging s
+     where s.organization_id = p_organization_id
+       and s.batch_id = p_batch_id
+       and s.entity_type = 'unit'
+       and s.validation_status = 'valid'
+     order by s.id
+  loop
+    v_development_id := null;
+    select d.id
+      into v_development_id
+      from public.real_estate_developments d
+     where d.organization_id = p_organization_id
+       and d.external_id = (v_row.raw_payload->>'development_external_id')::text
+     limit 1;
+
+    if v_development_id is null then
+      raise exception 'CV_CRM_DEPENDENCY_MISSING: unit % sem development_external_id %',
+        v_row.external_id, v_row.raw_payload->>'development_external_id'
+        using errcode = '23503';
+    end if;
+
+    v_existing_unit_id := null;
+    v_old_valor_cents := null;
+    v_old_status := null;
+    select u.id, u.valor_cents, u.status
+      into v_existing_unit_id, v_old_valor_cents, v_old_status
+      from public.real_estate_units u
+     where u.organization_id = p_organization_id
+       and u.external_id = v_row.external_id
+     limit 1
+     for update;
+
+    v_new_valor_cents := nullif((v_row.raw_payload->>'valor_cents')::text, '')::bigint;
+    v_new_status := (v_row.raw_payload->>'status')::text;
+
+    insert into public.real_estate_units (
+      organization_id, development_id, bloco, numero, andar, metragem,
+      quartos, suites, vagas, valor_cents, condicoes, status,
+      external_id, cv_crm_last_seen_at, created_at, updated_at
+    ) values (
+      p_organization_id,
+      v_development_id,
+      (v_row.raw_payload->>'bloco')::text,
+      (v_row.raw_payload->>'numero')::text,
+      nullif((v_row.raw_payload->>'andar')::text, '')::integer,
+      nullif((v_row.raw_payload->>'metragem')::text, '')::numeric,
+      nullif((v_row.raw_payload->>'quartos')::text, '')::integer,
+      nullif((v_row.raw_payload->>'suites')::text, '')::integer,
+      nullif((v_row.raw_payload->>'vagas')::text, '')::integer,
+      v_new_valor_cents,
+      (v_row.raw_payload->>'condicoes')::text,
+      v_new_status,
+      v_row.external_id,
+      now(), now(), now()
+    )
+    on conflict (organization_id, external_id)
+    where external_id is not null
+    do update set
+      development_id = excluded.development_id,
+      bloco = excluded.bloco,
+      numero = excluded.numero,
+      andar = excluded.andar,
+      metragem = excluded.metragem,
+      quartos = excluded.quartos,
+      suites = excluded.suites,
+      vagas = excluded.vagas,
+      valor_cents = excluded.valor_cents,
+      condicoes = excluded.condicoes,
+      status = excluded.status,
+      cv_crm_last_seen_at = now(),
+      cv_crm_stale_since = null,
+      updated_at = now()
+    returning id into v_unit_id;
+
+    if v_existing_unit_id is not null then
+      if v_old_valor_cents is distinct from v_new_valor_cents then
+        insert into public.real_estate_history (
+          organization_id, unit_id, campo, valor_anterior, valor_novo, fonte
+        ) values (
+          p_organization_id, v_unit_id, 'valor_cents',
+          v_old_valor_cents::text, v_new_valor_cents::text, 'cv_crm'
+        );
+      end if;
+      if v_old_status is distinct from v_new_status then
+        insert into public.real_estate_history (
+          organization_id, unit_id, campo, valor_anterior, valor_novo, fonte
+        ) values (
+          p_organization_id, v_unit_id, 'status',
+          v_old_status, v_new_status, 'cv_crm'
+        );
+      end if;
+    end if;
+
+    v_count := v_count + 1;
+  end loop;
+
+  -- PRICE LISTS
+  for v_row in
+    select s.*
+      from public.cv_crm_staging s
+     where s.organization_id = p_organization_id
+       and s.batch_id = p_batch_id
+       and s.entity_type = 'price_list'
+       and s.validation_status = 'valid'
+     order by s.id
+  loop
+    v_development_id := null;
+    v_constructor_id := null;
+    select d.id, d.constructor_id
+      into v_development_id, v_constructor_id
+      from public.real_estate_developments d
+     where d.organization_id = p_organization_id
+       and d.external_id = (v_row.raw_payload->>'development_external_id')::text
+     limit 1;
+
+    if v_development_id is null then
+      raise exception 'CV_CRM_DEPENDENCY_MISSING: price_list % sem development_external_id %',
+        v_row.external_id, v_row.raw_payload->>'development_external_id'
+        using errcode = '23503';
+    end if;
+
+    insert into public.real_estate_price_lists (
+      organization_id, constructor_id, development_id, nome, etapa, versao,
+      vigencia_inicio, vigencia_fim, origem_ref, status, fonte,
+      external_id, created_at, updated_at
+    ) values (
+      p_organization_id,
+      v_constructor_id,
+      v_development_id,
+      (v_row.raw_payload->>'nome')::text,
+      (v_row.raw_payload->>'etapa')::text,
+      coalesce(nullif((v_row.raw_payload->>'versao')::text, '')::integer, 1),
+      (v_row.raw_payload->>'vigencia_inicio')::date,
+      nullif((v_row.raw_payload->>'vigencia_fim')::text, '')::date,
+      (v_row.raw_payload->>'origem_ref')::text,
+      coalesce(nullif((v_row.raw_payload->>'status')::text, ''), 'ativa'),
+      'cv_crm',
+      v_row.external_id,
+      now(), now()
+    )
+    on conflict (organization_id, external_id)
+    where external_id is not null
+    do update set
+      constructor_id = excluded.constructor_id,
+      development_id = excluded.development_id,
+      nome = excluded.nome,
+      etapa = excluded.etapa,
+      versao = excluded.versao,
+      vigencia_inicio = excluded.vigencia_inicio,
+      vigencia_fim = excluded.vigencia_fim,
+      origem_ref = excluded.origem_ref,
+      status = excluded.status,
+      fonte = 'cv_crm',
+      updated_at = now();
+
+    v_count := v_count + 1;
+  end loop;
+
+  -- PRICE LIST ITEMS
+  for v_row in
+    select s.*
+      from public.cv_crm_staging s
+     where s.organization_id = p_organization_id
+       and s.batch_id = p_batch_id
+       and s.entity_type = 'price_list_item'
+       and s.validation_status = 'valid'
+     order by s.id
+  loop
+    v_price_list_id := null;
+    select pl.id
+      into v_price_list_id
+      from public.real_estate_price_lists pl
+     where pl.organization_id = p_organization_id
+       and pl.external_id = (v_row.raw_payload->>'price_list_external_id')::text
+     limit 1;
+
+    if v_price_list_id is null then
+      raise exception 'CV_CRM_DEPENDENCY_MISSING: price_list_item % sem price_list_external_id %',
+        v_row.external_id, v_row.raw_payload->>'price_list_external_id'
+        using errcode = '23503';
+    end if;
+
+    v_unit_id := null;
+    select u.id
+      into v_unit_id
+      from public.real_estate_units u
+     where u.organization_id = p_organization_id
+       and u.external_id = (v_row.raw_payload->>'unit_external_id')::text
+     limit 1;
+
+    if v_unit_id is null then
+      raise exception 'CV_CRM_DEPENDENCY_MISSING: price_list_item % sem unit_external_id %',
+        v_row.external_id, v_row.raw_payload->>'unit_external_id'
+        using errcode = '23503';
+    end if;
+
+    insert into public.real_estate_price_list_items (
+      organization_id, price_list_id, unit_id, valor_cents, sinal_cents,
+      parcelas, financiamento, condicoes_chaves, status, quadra,
+      unidade_ref, observacoes, external_id, created_at, updated_at
+    ) values (
+      p_organization_id,
+      v_price_list_id,
+      v_unit_id,
+      (v_row.raw_payload->>'valor_cents')::bigint,
+      nullif((v_row.raw_payload->>'sinal_cents')::text, '')::bigint,
+      v_row.raw_payload->'parcelas',
+      (v_row.raw_payload->>'financiamento')::text,
+      (v_row.raw_payload->>'condicoes_chaves')::text,
+      (v_row.raw_payload->>'status')::text,
+      (v_row.raw_payload->>'quadra')::text,
+      (v_row.raw_payload->>'unidade_ref')::text,
+      (v_row.raw_payload->>'observacoes')::text,
+      v_row.external_id,
+      now(), now()
+    )
+    on conflict (organization_id, external_id)
+    where external_id is not null
+    do update set
+      price_list_id = excluded.price_list_id,
+      unit_id = excluded.unit_id,
+      valor_cents = excluded.valor_cents,
+      sinal_cents = excluded.sinal_cents,
+      parcelas = excluded.parcelas,
+      financiamento = excluded.financiamento,
+      condicoes_chaves = excluded.condicoes_chaves,
+      status = excluded.status,
+      quadra = excluded.quadra,
+      unidade_ref = excluded.unidade_ref,
+      observacoes = excluded.observacoes,
+      updated_at = now();
+
+    v_count := v_count + 1;
+  end loop;
+
+  update public.cv_crm_staging
+     set validation_status = 'processed',
+         processed_at = now()
+   where organization_id = p_organization_id
+     and batch_id = p_batch_id
+     and validation_status = 'valid';
+
+  get diagnostics v_marked = row_count;
+  if v_marked <> v_count then
+    raise exception 'CV_CRM_APPLY_COUNT_MISMATCH: aplicados %, staging marcado %',
+      v_count, v_marked;
+  end if;
+
+  return v_count;
+end;
+$$;
+
+revoke execute on function public.fn_apply_cv_crm_valid_records(uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.fn_apply_cv_crm_valid_records(uuid, uuid)
+  to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- revoke real_estate/constructors grants server-only (migration 0535) ----
+revoke all on table public.real_estate_developments from public, anon, authenticated;
+revoke all on table public.real_estate_units from public, anon, authenticated;
+revoke all on table public.real_estate_price_lists from public, anon, authenticated;
+revoke all on table public.real_estate_price_list_items from public, anon, authenticated;
+revoke all on table public.real_estate_history from public, anon, authenticated;
+revoke all on table public.constructors from public, anon, authenticated;
+grant select on table public.real_estate_developments to authenticated;
+grant select on table public.real_estate_units to authenticated;
+grant select on table public.real_estate_price_lists to authenticated;
+grant select on table public.real_estate_price_list_items to authenticated;
+grant select on table public.real_estate_history to authenticated;
+grant select on table public.constructors to authenticated;
+grant select, insert, update, delete on table public.real_estate_developments to service_role;
+grant select, insert, update, delete on table public.real_estate_units to service_role;
+grant select, insert, update, delete on table public.real_estate_price_lists to service_role;
+grant select, insert, update, delete on table public.real_estate_price_list_items to service_role;
+grant select, insert, update, delete on table public.real_estate_history to service_role;
+grant select, insert, update, delete on table public.constructors to service_role;
+
 
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --

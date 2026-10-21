@@ -1,4 +1,5 @@
 import type { AgentOperationContext } from '@/lib/ai/agents/operation';
+import type { ToolReceipt } from './guardrails/lia-outbound-guard';
 import type { JobClaim } from './queue/claim';
 /**
  * Contrato agnóstico de canal (F2-25; blueprint risco nº 1 + veredito executivo).
@@ -17,6 +18,7 @@ import type { JobClaim } from './queue/claim';
 /** Uma mensagem de texto a enviar ao lead. Identidade da intenção = (jobId, seq). */
 export interface ChannelSendInput {
   agentOperation?: AgentOperationContext;
+  toolReceipts?: ToolReceipt[];
   jobClaim?: JobClaim;
   tenantId: string;
   leadId: string | null;

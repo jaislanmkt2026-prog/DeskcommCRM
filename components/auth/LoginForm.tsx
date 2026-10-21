@@ -2,7 +2,7 @@
 
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useTransition, useState } from "react";
+import { useEffect, useTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useT } from "@/hooks/i18n/useT";
@@ -23,14 +23,28 @@ export function LoginForm({ next }: { next?: string }) {
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
   });
 
+  // Só o e-mail fica no navegador; a senha é do gerenciador de senhas dele.
+  const [lembrarEmail, setLembrarEmail] = useState(true);
+  useEffect(() => {
+    try {
+      const salvo = localStorage.getItem("login:email");
+      if (salvo) setValue("email", salvo);
+    } catch {}
+  }, [setValue]);
+
   const onSubmit = (values: LoginInput) => {
     setServerError(null);
+    try {
+      if (lembrarEmail) localStorage.setItem("login:email", values.email);
+      else localStorage.removeItem("login:email");
+    } catch {}
     startTransition(async () => {
       // Server Action redirects on success — no return value reaches here.
       // On failure, an error discriminator is returned and rendered inline.
@@ -66,7 +80,7 @@ export function LoginForm({ next }: { next?: string }) {
         <Input
           id="email"
           type="email"
-          autoComplete="email"
+          autoComplete="username"
           autoFocus
           aria-invalid={errors.email ? true : undefined}
           {...register("email")}
@@ -101,6 +115,14 @@ export function LoginForm({ next }: { next?: string }) {
           <p className="text-xs text-destructive">{t(errors.password.message ?? "")}</p>
         )}
       </div>
+      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={lembrarEmail}
+          onChange={(e) => setLembrarEmail(e.target.checked)}
+        />
+        {t("Lembrar meu e-mail neste computador")}
+      </label>
       {serverError && (
         <div
           className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
