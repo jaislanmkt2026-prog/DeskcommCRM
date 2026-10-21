@@ -3396,6 +3396,9 @@ async function executarTurnoDoAgente(
                 'Você já enviou uma mensagem muito parecida a esta nesta conversa, depois da última fala do cliente — ela NÃO foi reenviada. ' +
                 'Não repita a mesma informação. Se há algo genuinamente novo a acrescentar, envie SÓ a parte nova; ' +
                 'senão encerre o turno agora.',
+            },
+          };
+        }
         const politicaDePerguntasDaLia = validarUmaPerguntaPorMensagemDaLia({
           body,
           toolIds: agentConfig?.toolIds ?? [],
