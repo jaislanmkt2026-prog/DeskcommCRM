@@ -1,0 +1,15 @@
+{
+  "upstream": "melgarafael/DeskcommCRM",
+  "branch": "main",
+  "last_seen_head": "d1081dc231e1f7b0c6648af2011282d42b92fe85",
+  "last_seen_tag": "v1.49.0",
+  "last_seen_release": "v1.49.0",
+  "origin_head": "d1081dc231e1f7b0c6648af2011282d42b92fe85",
+  "local_head": "853e0d240443da30bfcbea6f5f654af94e0c0f4f",
+  "checked_at": "2026-09-25T19:50:54Z",
+  "update_found": false,
+  "auto_merge": false,
+  "auto_push": false,
+  "frequency_hours": 6,
+  "owner": "CRIVO"
+}
